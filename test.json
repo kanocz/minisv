@@ -1,0 +1,20 @@
+{
+    "logdir": "/tmp/logs",
+    "logfileprefix": "container1-",
+    "tasks": {
+        "sleep3600": {
+            "command": "/bin/sleep",
+            "args": ["3600"],
+            "wait": 5,
+            "restartPause":10,
+            "startTime": 3
+        },
+        "sleep1800": {
+            "command": "/bin/sleep",
+            "args": ["1800"],
+            "wait": 5,
+            "restartPause":10,
+            "startTime": 3
+        }
+    }
+}
