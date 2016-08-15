@@ -14,6 +14,7 @@ var config struct {
 	Tasks     map[string]struct {
 		Command   string   `json:"command"`
 		Args      []string `json:"args"`
+		WorkDir   string   `json:"workdir"`
 		Wait      int      `json:"wait"`
 		Pause     int      `json:"restartPause"`
 		StartTime int      `json:"startTime"`

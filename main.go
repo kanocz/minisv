@@ -58,6 +58,9 @@ func taskLoop(name string, cExit chan bool, wg *sync.WaitGroup) {
 		cmd := exec.Command(config.Tasks[name].Command, config.Tasks[name].Args...)
 		cmd.Stdout = out
 		cmd.Stderr = out
+		if "" != config.Tasks[name].WorkDir {
+			cmd.Dir = config.Tasks[name].WorkDir
+		}
 
 		err := cmd.Start()
 		if nil != err {

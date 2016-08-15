@@ -5,6 +5,7 @@
         "sleep3600": {
             "command": "/bin/sleep",
             "args": ["3600"],
+            "workdir": "/tmp",
             "wait": 5,
             "restartPause":10,
             "startTime": 3
