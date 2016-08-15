@@ -145,6 +145,8 @@ func taskLoop(name string, cExit chan bool, wg *sync.WaitGroup) {
 				cmd2.Process.Signal(sig)
 			}
 
+			continue
+
 		case <-config.Tasks[name].rSignal:
 			logger.Println("Doing gracefull restart")
 
@@ -184,6 +186,8 @@ func taskLoop(name string, cExit chan bool, wg *sync.WaitGroup) {
 				termChild(run2, cmd2, done2, config.Tasks[name].Wait, logger, nil)
 			}
 
+			continue
+
 		case <-cExit:
 			logger.Println("Sending term signal to childs")
 			smallWg := sync.WaitGroup{}
@@ -220,6 +224,8 @@ func main() {
 
 		go taskLoop(name, needExit, &wg)
 	}
+
+	httpInit()
 
 	log.Println("dockstarted running...")
 

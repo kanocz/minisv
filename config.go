@@ -21,6 +21,10 @@ var config struct {
 		cSignal chan os.Signal
 		rSignal chan bool
 	} `json:"tasks"`
+	HTTP struct {
+		Addr string `json:"address"`
+		Port int    `json:"port"`
+	} `json:"http"`
 }
 
 var (

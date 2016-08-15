@@ -16,5 +16,9 @@
             "restartPause":10,
             "startTime": 3
         }
+    },
+    "http": {
+        "address": "127.0.0.1",
+        "port": 3443
     }
 }
