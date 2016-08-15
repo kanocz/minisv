@@ -1,0 +1,25 @@
+{
+    "logdir": "/var/log/dockstarter",
+    "logfileprefix": "container1-",
+    "tasks": {
+        "redis": {
+            "command": "/usr/bin/redis-server",
+            "args": ["--port", "6379"],
+            "workdir": "/tmp",
+            "wait": 60,
+            "restartPause":1,
+            "startTime": 10
+        },
+        "nginx": {
+            "command": "/usr/sbin/nginx",
+            "args": ["-g", "daemon off;"],
+            "wait": 60,
+            "restartPause":0,
+            "startTime": 3
+        }
+    },
+    "http": {
+        "address": "127.0.0.1",
+        "port": 3443
+    }
+}

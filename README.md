@@ -19,3 +19,56 @@ for exampe:
 curl -i http://127.0.0.1:3443/sleep1800/kill
 curl -i http://127.0.0.1:3443/sleep1800/restart
 ```
+
+Example *Dockerfile* for use with dockstarter:
+
+```Dockerfile
+FROM ubuntu:16.04
+MAINTAINER somebody@service
+
+RUN apt-get update && apt-get install -y nginx-light redis-server
+RUN mkdir -p /var/log/nginx /var/log/dockstarter /opt
+
+COPY dockstarter /opt
+COPY dockstarter.json /opt
+
+EXPOSE 80 443 3443 6379
+ENTRYPOINT ["/opt/dockstarter"]
+```
+
+while dockstarter.json contains
+
+```json
+{
+    "logdir": "/var/log/dockstarter",
+    "logfileprefix": "container1-",
+    "tasks": {
+        "redis": {
+            "command": "/usr/bin/redis-server",
+            "args": ["--port", "6379"],
+            "workdir": "/tmp",
+            "wait": 60,
+            "restartPause":1,
+            "startTime": 10
+        },
+        "nginx": {
+            "command": "/usr/sbin/nginx",
+            "args": ["-g", "daemon off;"],
+            "wait": 60,
+            "restartPause":0,
+            "startTime": 3
+        }
+    },
+    "http": {
+        "address": "127.0.0.1",
+        "port": 3443
+    }
+}
+```
+
+starting with
+```bash
+docker run -v /var/log/dockstarter:/var/log/dockstarter container1
+```
+
+using different *logfileprefix* prevents mixing of logfileprefix
