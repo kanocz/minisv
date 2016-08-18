@@ -184,9 +184,9 @@ func taskLoop(name string, cExit chan bool, wg *sync.WaitGroup) {
 
 			logger.Println("New instance running, terminating old one")
 			if stage {
-				termChild(run1, cmd1, done1, config.Tasks[name].Wait, logger, nil)
-			} else {
 				termChild(run2, cmd2, done2, config.Tasks[name].Wait, logger, nil)
+			} else {
+				termChild(run1, cmd1, done1, config.Tasks[name].Wait, logger, nil)
 			}
 
 			continue
