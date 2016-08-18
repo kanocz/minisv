@@ -1,0 +1,8 @@
+[Unit]
+Description=DockStarter process supervise
+
+[Service]
+ExecStart=/opt/dockstarter
+
+[Install]
+WantedBy=multi-user.target
