@@ -3,6 +3,7 @@ Description=DockStarter process supervise
 
 [Service]
 ExecStart=/opt/dockstarter
+Restart=always
 
 [Install]
 WantedBy=multi-user.target
