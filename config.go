@@ -29,7 +29,7 @@ var config struct {
 }
 
 var (
-	configfile = flag.String("config", "/opt/dockstarter.json", "DockStarter config file in json format")
+	configfile = flag.String("config", "/opt/minisv.json", "minisv config file in json format")
 )
 
 func readConfig() bool {

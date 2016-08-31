@@ -1,5 +1,5 @@
 {
-    "logdir": "/var/log/dockstarter",
+    "logdir": "/var/log/minisv",
     "logfileprefix": "container1-",
     "tasks": {
         "redis": {

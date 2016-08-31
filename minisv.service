@@ -1,8 +1,8 @@
 [Unit]
-Description=DockStarter process supervise
+Description=minisv process supervise
 
 [Service]
-ExecStart=/opt/dockstarter
+ExecStart=/opt/minisv
 Restart=always
 
 [Install]
