@@ -37,6 +37,34 @@ func termChild(running bool, cmd *exec.Cmd, ch chan error, wait int, logger *log
 
 }
 
+func taskRun(name string) {
+	out, err := os.OpenFile(fmt.Sprintf("%s/%s%s.log", config.LogDir, config.LogPrefix, name), os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
+	if nil != err {
+		log.Printf("Error opening output log (%s/%s.log), using stdout: %v\n", config.LogDir, name, err)
+		out = os.Stdout
+	} else {
+		defer out.Close()
+	}
+
+	logger := log.New(out, "", log.LstdFlags)
+
+	logger.Printf("Starting %s %v\n", config.Tasks[name].Command, config.Tasks[name].Args)
+	cmd := exec.Command(config.Tasks[name].Command, config.Tasks[name].Args...)
+	cmd.Stdout = out
+	cmd.Stderr = out
+	if "" != config.Tasks[name].WorkDir {
+		cmd.Dir = config.Tasks[name].WorkDir
+	}
+
+	err = cmd.Start()
+	if nil != err {
+		logger.Printf("Error starting %s (%s): %v\n", name, config.Tasks[name].Command, err)
+		return
+	}
+
+	cmd.Wait()
+}
+
 func taskLoop(name string, cExit chan bool, wg *sync.WaitGroup) {
 	defer wg.Done()
 
@@ -219,18 +247,20 @@ func main() {
 	wg := sync.WaitGroup{}
 
 	for name := range config.Tasks {
-		wg.Add(1)
 		cx := config.Tasks[name]
-		cx.cSignal = make(chan os.Signal)
-		cx.rSignal = make(chan bool)
-		config.Tasks[name] = cx
+		if !cx.OneTime {
+			wg.Add(1)
+			cx.cSignal = make(chan os.Signal)
+			cx.rSignal = make(chan bool)
+			config.Tasks[name] = cx
 
-		go taskLoop(name, needExit, &wg)
+			go taskLoop(name, needExit, &wg)
+		}
 	}
 
 	httpInit()
 
-	log.Println("dockstarted running...")
+	log.Println("minisv running...")
 
 	exitChan := make(chan os.Signal, 1)
 	signal.Notify(exitChan, syscall.SIGTERM)

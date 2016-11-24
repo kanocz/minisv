@@ -7,17 +7,18 @@ new instance will started, waited X seconds to be sure that anything
 is ok and only then SIGTERM will be send to old one; if old one
 will not exit in Y time than SIGKILL also sent.
 
-Possibility to run predefined tasks on webhooks is also planed
-(primary for pulling new versions on github webhooks)
+It's also possible to run "one-time" actions like a repository pull one
+webhook and so on (need to have `oneTime` setted to `true`)
 
 for restarting or sending signals next http schema used:
 
-`http://[addr]:[port]/[taskname]/[restart|term|hup|kill]`
+`http://[addr]:[port]/[taskname]/[restart|term|hup|kill|run]`
 
 for exampe:
 ```
 curl -i http://127.0.0.1:3443/sleep1800/kill
 curl -i http://127.0.0.1:3443/sleep1800/restart
+curl -i http://127.0.0.1:3443/pull/run
 ```
 
 Example *Dockerfile* for use with minisv:
@@ -57,6 +58,11 @@ while minisv.json contains
             "wait": 60,
             "restartPause":0,
             "startTime": 3
+        },
+        "pull": {
+            "command": "/usr/bin/git",
+            "args": ["pull", "-f"],
+            "oneTime": true
         }
     },
     "http": {

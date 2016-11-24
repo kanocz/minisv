@@ -18,6 +18,7 @@ var config struct {
 		Wait      int      `json:"wait"`
 		Pause     int      `json:"restartPause"`
 		StartTime int      `json:"startTime"`
+		OneTime   bool     `json:"oneTime"`
 		// hidden fields
 		cSignal chan os.Signal
 		rSignal chan bool
