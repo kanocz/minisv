@@ -62,6 +62,7 @@ while minisv.json contains
         "pull": {
             "command": "/usr/bin/git",
             "args": ["pull", "-f"],
+            "workdir": "/home/www/example.com",
             "oneTime": true
         }
     },

@@ -16,6 +16,12 @@
             "wait": 60,
             "restartPause":0,
             "startTime": 3
+        },
+        "pull": {
+            "command": "/usr/bin/git",
+            "args": ["pull", "-f"],
+            "workdir": "/home/www/example.com",
+            "oneTime": true
         }
     },
     "http": {
