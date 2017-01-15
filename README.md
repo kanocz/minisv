@@ -8,11 +8,16 @@ is ok and only then SIGTERM will be send to old one; if old one
 will not exit in Y time than SIGKILL also sent.
 
 It's also possible to run "one-time" actions like a repository pull one
-webhook and so on (need to have `oneTime` setted to `true`)
+webhook and so on (need to have `oneTime` setted to `true`).
+
+Possibility to "rotate" logs using HUP signal, using `logreload` variable
+in config or `rotate` command via http. Using `logdate` it's possible to
+add current date/time as log file name sufix (using class golang format).
+This affects only permanent task, not `oneTime`.
 
 for restarting or sending signals next http schema used:
 
-`http://[addr]:[port]/[taskname]/[restart|term|hup|kill|run]`
+`http://[addr]:[port]/[taskname]/[restart|term|hup|kill|run|rotate]`
 
 for exampe:
 ```
@@ -43,6 +48,9 @@ while minisv.json contains
 {
     "logdir": "/var/log/minisv",
     "logfileprefix": "container1-",
+    "logreopen": "1h",
+    "logsuffixdate": "20060102.150405",
+    "logdate": "2006/01/02 15:04:05",
     "tasks": {
         "redis": {
             "command": "/usr/bin/redis-server",
@@ -78,4 +86,4 @@ starting with
 docker run -v /var/log/minisv:/var/log/minisv container1
 ```
 
-using different *logfileprefix* prevents mixing of logfileprefix
+using different *logfileprefix* prevents mixing of logs from different containers

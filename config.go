@@ -6,12 +6,25 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"strings"
+	"time"
 )
 
+type configDuration time.Duration
+
+func (d *configDuration) UnmarshalJSON(b []byte) error {
+	duration, err := time.ParseDuration(strings.Trim(string(b), " \""))
+	*d = configDuration(duration)
+	return err
+}
+
 var config struct {
-	LogDir    string `json:"logdir"`
-	LogPrefix string `json:"logfileprefix"`
-	Tasks     map[string]struct {
+	LogDir        string         `json:"logdir"`
+	LogPrefix     string         `json:"logfileprefix"`
+	LogSuffixDate string         `json:"logsuffixdate"`
+	LogDate       string         `json:"logdate"`
+	LogReopen     configDuration `json:"logreopen"`
+	Tasks         map[string]struct {
 		Command   string   `json:"command"`
 		Args      []string `json:"args"`
 		WorkDir   string   `json:"workdir"`
@@ -21,7 +34,8 @@ var config struct {
 		OneTime   bool     `json:"oneTime"`
 		// hidden fields
 		cSignal chan os.Signal
-		rSignal chan bool
+		rSignal chan bool // restart signal
+		fSignal chan bool // log flush signal
 	} `json:"tasks"`
 	HTTP struct {
 		Addr string `json:"address"`

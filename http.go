@@ -19,6 +19,7 @@ func httpInit() {
 		r.Get("/term", httpSignalTask(syscall.SIGTERM))
 		r.Get("/hup", httpSignalTask(syscall.SIGHUP))
 		r.Get("/kill", httpSignalTask(syscall.SIGKILL))
+		r.Get("/rotate", httpLogRotateTask)
 	})
 	go http.ListenAndServe(fmt.Sprintf("%s:%d", config.HTTP.Addr, config.HTTP.Port), r)
 }
@@ -80,4 +81,25 @@ func httpSignalTask(sig os.Signal) func(w http.ResponseWriter, r *http.Request) 
 
 		w.Write([]byte("ok"))
 	}
+}
+
+func httpLogRotateTask(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "id")
+	task, ok := config.Tasks[name]
+
+	if !ok {
+		w.Write([]byte("task not found"))
+		return
+	}
+
+	if task.OneTime {
+		w.Write([]byte("it's a one-time task"))
+		return
+	}
+
+	select {
+	case task.fSignal <- true:
+	}
+
+	w.Write([]byte("ok"))
 }
