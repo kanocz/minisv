@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"syscall"
@@ -21,85 +22,72 @@ func httpInit() {
 		r.Get("/kill", httpSignalTask(syscall.SIGKILL))
 		r.Get("/rotate", httpLogRotateTask)
 	})
-	go http.ListenAndServe(fmt.Sprintf("%s:%d", config.HTTP.Addr, config.HTTP.Port), r)
+	log.Println(
+		http.ListenAndServe(
+			fmt.Sprintf("%s:%d", config.HTTP.Addr, config.HTTP.Port), r))
 }
 
-func httpRestartTask(w http.ResponseWriter, r *http.Request) {
+func getTask(w http.ResponseWriter, r *http.Request, allowOneTime bool) *Task {
 	name := chi.URLParam(r, "id")
 	task, ok := config.Tasks[name]
 
 	if !ok {
-		w.Write([]byte("task not found"))
-		return
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte("task not found"))
+		return nil
 	}
 
-	if task.OneTime {
-		w.Write([]byte("it's a one-time task"))
+	if !allowOneTime && task.OneTime {
+		w.WriteHeader(http.StatusNotAcceptable)
+		_, _ = w.Write([]byte("it's a one-time task"))
+		return nil
+	}
+
+	return task
+}
+
+func httpRestartTask(w http.ResponseWriter, r *http.Request) {
+	task := getTask(w, r, false)
+	if nil == task {
 		return
 	}
 
 	task.rSignal <- true
-
-	w.Write([]byte("ok"))
+	_, _ = w.Write([]byte("ok"))
 }
 
 func httpRunTask(w http.ResponseWriter, r *http.Request) {
-	name := chi.URLParam(r, "id")
-	task, ok := config.Tasks[name]
-
-	if !ok {
-		w.Write([]byte("task not found"))
+	task := getTask(w, r, false)
+	if nil == task {
 		return
 	}
 
-	if !task.OneTime {
-		w.Write([]byte("not a one-time task"))
-		return
-	}
-
-	go taskRun(name)
-
-	w.Write([]byte("ok"))
+	go task.Run()
+	_, _ = w.Write([]byte("ok"))
 }
 
-func httpSignalTask(sig os.Signal) func(w http.ResponseWriter, r *http.Request) {
+func httpSignalTask(sig os.Signal) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		name := chi.URLParam(r, "id")
-		task, ok := config.Tasks[name]
-
-		if !ok {
-			w.Write([]byte("task not found"))
-			return
-		}
-
-		if task.OneTime {
-			w.Write([]byte("it's a one-time task"))
+		task := getTask(w, r, false)
+		if nil == task {
 			return
 		}
 
 		task.cSignal <- sig
-
-		w.Write([]byte("ok"))
+		_, _ = w.Write([]byte("ok"))
 	}
 }
 
 func httpLogRotateTask(w http.ResponseWriter, r *http.Request) {
-	name := chi.URLParam(r, "id")
-	task, ok := config.Tasks[name]
-
-	if !ok {
-		w.Write([]byte("task not found"))
-		return
-	}
-
-	if task.OneTime {
-		w.Write([]byte("it's a one-time task"))
+	task := getTask(w, r, false)
+	if nil == task {
 		return
 	}
 
 	select {
 	case task.fSignal <- true:
+	default:
 	}
 
-	w.Write([]byte("ok"))
+	_, _ = w.Write([]byte("ok"))
 }

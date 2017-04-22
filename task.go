@@ -2,41 +2,78 @@ package main
 
 import (
 	"fmt"
+	"log"
+	"os"
 	"os/exec"
 	"sync"
 	"time"
 )
 
-func taskRun(name string) {
-	// for log rotation we need layer in the middle
-	writer := logWithRotation(fmt.Sprintf("%s/%s%s.log", config.LogDir, config.LogPrefix, name),
-		config.LogSuffixDate, config.Tasks[name].fSignal, config.LogDate)
-	defer writer.Close()
+// Task represents one running process/application
+type Task struct {
+	Command   string   `json:"command"`
+	Args      []string `json:"args"`
+	WorkDir   string   `json:"workdir"`
+	Wait      int      `json:"wait"`
+	Pause     int      `json:"restartPause"`
+	StartTime int      `json:"startTime"`
+	OneTime   bool     `json:"oneTime"`
+	// hidden fields
+	name    string // duplicate name from config
+	cSignal chan os.Signal
+	rSignal chan bool // restart signal
+	fSignal chan bool // log flush signal
+}
 
-	fmt.Fprintf(writer, "[minisv] Starting %s %v\n", config.Tasks[name].Command, config.Tasks[name].Args)
-	cmd := exec.Command(config.Tasks[name].Command, config.Tasks[name].Args...)
+// Run task one time
+func (t *Task) Run() {
+	// for log rotation we need layer in the middle
+	writer := logWithRotation(fmt.Sprintf("%s/%s%s.log",
+		config.LogDir, config.LogPrefix, t.name),
+		config.LogSuffixDate, t.fSignal, config.LogDate)
+	defer func() {
+		err := writer.Close()
+		if nil != err {
+			log.Println("Error closing output: ", err)
+		}
+	}()
+
+	fmt.Fprintf(writer, "[minisv] Starting %s %v\n", t.Command, t.Args)
+	cmd := exec.Command(t.Command, t.Args...)
 	cmd.Stdout = writer
 	cmd.Stderr = writer
-	if "" != config.Tasks[name].WorkDir {
-		cmd.Dir = config.Tasks[name].WorkDir
+	if "" != t.WorkDir {
+		cmd.Dir = t.WorkDir
 	}
 
 	err := cmd.Start()
 	if nil != err {
-		fmt.Fprintf(writer, "[minisv] Error starting %s (%s): %v\n", name, config.Tasks[name].Command, err)
+		fmt.Fprintf(writer, "[minisv] Error starting %s (%s): %v\n",
+			t.name, t.Command, err)
 		return
 	}
 
-	cmd.Wait()
+	err = cmd.Wait()
+	if nil != err {
+		fmt.Fprintf(writer, "[minisv] Command %s (%s) ended with error: %v\n",
+			t.name, t.Command, err)
+	}
 }
 
-func taskLoop(name string, cExit chan bool, wg *sync.WaitGroup) {
+// Loop task runinng and restarting
+func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	// for log rotation we need layer in the middle
-	out := logWithRotation(fmt.Sprintf("%s/%s%s.log", config.LogDir, config.LogPrefix, name),
-		config.LogSuffixDate, config.Tasks[name].fSignal, config.LogDate)
-	defer out.Close()
+	out := logWithRotation(fmt.Sprintf("%s/%s%s.log",
+		config.LogDir, config.LogPrefix, t.name),
+		config.LogSuffixDate, t.fSignal, config.LogDate)
+	defer func() {
+		err := out.Close()
+		if nil != err {
+			log.Println("Error closing output: ", err)
+		}
+	}()
 
 	var err error
 
@@ -44,18 +81,19 @@ func taskLoop(name string, cExit chan bool, wg *sync.WaitGroup) {
 	stage := true
 
 	startNext := func() (*exec.Cmd, chan error, error) {
-		fmt.Fprintf(out, "[minisv] Starting %s %v\n", config.Tasks[name].Command, config.Tasks[name].Args)
-		cmd := exec.Command(config.Tasks[name].Command, config.Tasks[name].Args...)
+		fmt.Fprintf(out, "[minisv] Starting %s %v\n", t.Command, t.Args)
+		cmd := exec.Command(t.Command, t.Args...)
 		cmd.Stdout = out
 		cmd.Stderr = out
-		if "" != config.Tasks[name].WorkDir {
-			cmd.Dir = config.Tasks[name].WorkDir
+		if "" != t.WorkDir {
+			cmd.Dir = t.WorkDir
 		}
 
-		err := cmd.Start()
+		err = cmd.Start()
 		if nil != err {
-			fmt.Fprintf(out, "[minisv] Error starting %s (%s): %v\n", name, config.Tasks[name].Command, err)
-			time.Sleep(time.Second * time.Duration(config.Tasks[name].Pause))
+			fmt.Fprintf(out, "[minisv] Error starting %s (%s): %v\n",
+				t.name, t.Command, err)
+			time.Sleep(time.Second * time.Duration(t.Pause))
 			return nil, nil, err
 		}
 
@@ -82,7 +120,7 @@ func taskLoop(name string, cExit chan bool, wg *sync.WaitGroup) {
 		}
 
 		select {
-		case err := <-done1:
+		case err = <-done1:
 
 			run1 = false
 
@@ -105,7 +143,7 @@ func taskLoop(name string, cExit chan bool, wg *sync.WaitGroup) {
 				continue
 			}
 
-		case err := <-done2:
+		case err = <-done2:
 
 			run2 = false
 
@@ -129,19 +167,27 @@ func taskLoop(name string, cExit chan bool, wg *sync.WaitGroup) {
 
 			}
 
-		case sig := <-config.Tasks[name].cSignal:
+		case sig := <-t.cSignal:
 			if stage {
-				fmt.Fprintln(out, "[minisv] Sending ", sig, " signal to process ", cmd1.Process.Pid)
-				cmd1.Process.Signal(sig)
+				fmt.Fprintln(out, "[minisv] Sending ", sig,
+					" signal to process ", cmd1.Process.Pid)
+				err = cmd1.Process.Signal(sig)
+				if nil != err {
+					fmt.Fprintln(out, "[minisv] Error sending ", sig, ": ", err)
+				}
 			} else {
-				fmt.Fprintln(out, "[minisv] Sending ", sig, " signal to process ", cmd2.Process.Pid)
-				cmd2.Process.Signal(sig)
+				fmt.Fprintln(out, "[minisv] Sending ", sig,
+					" signal to process ", cmd2.Process.Pid)
+				err = cmd2.Process.Signal(sig)
+				if nil != err {
+					fmt.Fprintln(out, "[minisv] Error sending ", sig, ": ", err)
+				}
 			}
 
 			continue
 
-		case <-config.Tasks[name].rSignal:
-			fmt.Fprintln(out, "[minisv] Doing gracefull restart")
+		case <-t.rSignal:
+			fmt.Fprintln(out, "[minisv] Doing graceful restart")
 
 			// castling of running processes
 			if stage {
@@ -154,19 +200,21 @@ func taskLoop(name string, cExit chan bool, wg *sync.WaitGroup) {
 			}
 
 			if nil != err {
-				fmt.Fprintln(out, "[minisv] Unable to start new instance, continue using old one")
+				fmt.Fprintln(out,
+					"[minisv] Unable to start new instance, continue using old one")
 				continue
 			}
 
 			var exited bool
 			if stage {
-				exited = waitForErrChan(done2, time.Second*time.Duration(config.Tasks[name].StartTime))
+				exited = waitForErrChan(done2, time.Second*time.Duration(t.StartTime))
 			} else {
-				exited = waitForErrChan(done1, time.Second*time.Duration(config.Tasks[name].StartTime))
+				exited = waitForErrChan(done1, time.Second*time.Duration(t.StartTime))
 			}
 
 			if exited {
-				fmt.Fprintln(out, "[minisv] New instance exited too fast, continue using old one")
+				fmt.Fprintln(out,
+					"[minisv] New instance exited too fast, continue using old one")
 				continue
 			}
 
@@ -174,9 +222,9 @@ func taskLoop(name string, cExit chan bool, wg *sync.WaitGroup) {
 
 			fmt.Fprintln(out, "[minisv] New instance running, terminating old one")
 			if stage {
-				termChild(run2, cmd2, done2, config.Tasks[name].Wait, out, nil)
+				termChild(run2, cmd2, done2, t.Wait, out, nil)
 			} else {
-				termChild(run1, cmd1, done1, config.Tasks[name].Wait, out, nil)
+				termChild(run1, cmd1, done1, t.Wait, out, nil)
 			}
 
 			continue
@@ -185,15 +233,16 @@ func taskLoop(name string, cExit chan bool, wg *sync.WaitGroup) {
 			fmt.Fprintln(out, "[minisv] Sending term signal to childs")
 			smallWg := sync.WaitGroup{}
 			smallWg.Add(2)
-			go termChild(run1, cmd1, done1, config.Tasks[name].Wait, out, &smallWg)
-			go termChild(run2, cmd2, done2, config.Tasks[name].Wait, out, &smallWg)
+			go termChild(run1, cmd1, done1, t.Wait, out, &smallWg)
+			go termChild(run2, cmd2, done2, t.Wait, out, &smallWg)
 			smallWg.Wait()
 			return
 		}
 
-		if config.Tasks[name].Pause != 0 {
-			fmt.Fprintln(out, "Waiting ", time.Second*time.Duration(config.Tasks[name].Pause), " before restart")
-			time.Sleep(time.Second * time.Duration(config.Tasks[name].Pause))
+		if t.Pause != 0 {
+			fmt.Fprintln(out, "Waiting ",
+				time.Second*time.Duration(t.Pause), " before restart")
+			time.Sleep(time.Second * time.Duration(t.Pause))
 		}
 	}
 }

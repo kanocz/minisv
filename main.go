@@ -19,16 +19,13 @@ func main() {
 	needExit := make(chan bool)
 	wg := sync.WaitGroup{}
 
-	for name := range config.Tasks {
-		cx := config.Tasks[name]
-		if !cx.OneTime {
+	for _, task := range config.Tasks {
+		if !task.OneTime {
 			wg.Add(1)
-			cx.cSignal = make(chan os.Signal)
-			cx.rSignal = make(chan bool)
-			cx.fSignal = make(chan bool)
-			config.Tasks[name] = cx
-
-			go taskLoop(name, needExit, &wg)
+			task.cSignal = make(chan os.Signal)
+			task.rSignal = make(chan bool)
+			task.fSignal = make(chan bool)
+			go task.Loop(needExit, &wg)
 		}
 	}
 

@@ -17,15 +17,17 @@ func openOrStdout(filename string, timeFormat string) *os.File {
 		outName = fmt.Sprintf("%s.%s", filename, time.Now().Format(timeFormat))
 	}
 
-	out, err := os.OpenFile(outName, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
+	out, err := os.OpenFile(outName, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0600)
 	if nil != err {
-		log.Printf("[minisv] Error opening output log (%s), using stdout: %v\n", outName, err)
+		log.Printf("[minisv] Error opening output log (%s), using stdout: %v\n",
+			outName, err)
 		return os.Stdout
 	}
 	return out
 }
 
-func logWithRotation(filename string, timeSuffixFormat string, rotate chan bool, timeFormat string) io.WriteCloser {
+func logWithRotation(filename string, timeSuffixFormat string, rotate chan bool,
+	timeFormat string) io.WriteCloser {
 
 	reader, writer := io.Pipe()
 
@@ -52,17 +54,25 @@ func logWithRotation(filename string, timeSuffixFormat string, rotate chan bool,
 			select {
 			case <-rotate:
 				if os.Stdout != out {
-					out.Close()
+					if err := out.Close(); nil != err {
+						log.Println("Error closing output: ", err)
+					}
 				}
 				out = openOrStdout(filename, timeSuffixFormat)
 			case str, ok := <-bufchan:
 				if !ok {
 					if os.Stdout != out {
-						out.Close()
+						if err := out.Close(); nil != err {
+							log.Println("Error closing output: ", err)
+						}
 					}
 					return
 				}
-				out.WriteString(fmt.Sprintf("%s: %s", time.Now().Format(timeFormat), str))
+				_, err := out.WriteString(
+					fmt.Sprintf("%s: %s", time.Now().Format(timeFormat), str))
+				if nil != err {
+					log.Println("Error writing to output file: ", err)
+				}
 			}
 		}
 	}()
@@ -75,6 +85,7 @@ func rotateLogs() {
 		if !config.Tasks[name].OneTime {
 			select {
 			case config.Tasks[name].fSignal <- true:
+			default:
 			}
 		}
 	}

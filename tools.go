@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"log"
 	"os/exec"
 	"sync"
 	"syscall"
@@ -18,7 +19,8 @@ func waitForErrChan(c chan error, t time.Duration) bool {
 	}
 }
 
-func termChild(running bool, cmd *exec.Cmd, ch chan error, wait int, out io.Writer, wg *sync.WaitGroup) {
+func termChild(running bool, cmd *exec.Cmd, ch chan error,
+	wait int, out io.Writer, wg *sync.WaitGroup) {
 	if nil != wg {
 		defer wg.Done()
 	}
@@ -26,10 +28,27 @@ func termChild(running bool, cmd *exec.Cmd, ch chan error, wait int, out io.Writ
 		return
 	}
 
-	cmd.Process.Signal(syscall.SIGTERM)
+	err := cmd.Process.Signal(syscall.SIGTERM)
+	if nil != err {
+		_, e := fmt.Fprintln(out, "Error sending TERM signal: ", err)
+		if nil != e {
+			log.Println("Error writing log: ", err)
+		}
+	}
+
 	if !waitForErrChan(ch, time.Duration(wait)*time.Second) {
-		fmt.Fprintln(out, "Process is still runing, sending kill signal")
-		cmd.Process.Kill()
+		_, e := fmt.Fprintln(out, "Process is still running, sending kill signal")
+		if nil != e {
+			log.Println("Error writing log: ", err)
+		}
+
+		err = cmd.Process.Kill()
+		if nil != err {
+			_, e := fmt.Fprintln(out, "Error sending KILL signal: ", err)
+			if nil != e {
+				log.Println("Error writing log: ", err)
+			}
+		}
 	}
 
 }
