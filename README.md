@@ -17,7 +17,7 @@ This affects only permanent task, not `oneTime`.
 
 for restarting or sending signals next http schema used:
 
-`http://[addr]:[port]/[taskname]/[restart|term|hup|kill|run|rotate]`
+`http://[addr]:[port]/[taskname]/[stop|restart|term|hup|kill|run|rotate]`
 
 for exampe:
 ```
@@ -87,3 +87,12 @@ docker run -v /var/log/minisv:/var/log/minisv container1
 ```
 
 using different *logfileprefix* prevents mixing of logs from different containers
+
+commands description:
+* *stop* - stop task until *restart* command
+* *restart* - start after *stop* OR _graceful restart_ if running (start new instance, wait if not crashed and then terminate old one)
+* *term* - send SIGTERM to process
+* *hup* - send SIGHUP to process
+* *kill* - send SIGKILL to process
+* *run* - run _onetime_ task
+* *rotate* - close log and reopen (with different name while _logsuffixdate_ is used)

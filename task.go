@@ -19,10 +19,12 @@ type Task struct {
 	StartTime int      `json:"startTime"`
 	OneTime   bool     `json:"oneTime"`
 	// hidden fields
-	name    string // duplicate name from config
-	cSignal chan os.Signal
-	rSignal chan bool // restart signal
-	fSignal chan bool // log flush signal
+	stopped bool           // indicate to don't restart after "die"
+	name    string         // duplicate name from config
+	cSignal chan os.Signal // send signal to process
+	rSignal chan bool      // restart signal
+	fSignal chan bool      // log flush signal
+	sSignal chan bool      // signal to stop task
 }
 
 // Run task one time
@@ -63,6 +65,12 @@ func (t *Task) Run() {
 // Loop task runinng and restarting
 func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 	defer wg.Done()
+
+	// init channels
+	t.cSignal = make(chan os.Signal)
+	t.rSignal = make(chan bool)
+	t.fSignal = make(chan bool)
+	t.sSignal = make(chan bool)
 
 	// for log rotation we need layer in the middle
 	out := logWithRotation(fmt.Sprintf("%s/%s%s.log",
@@ -110,13 +118,15 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 	var run1, run2 bool
 
 	for {
-		if stage && !run1 {
-			cmd1, done1, err = startNext()
-			run1 = nil == err
-		}
-		if !stage && !run2 {
-			cmd2, done2, err = startNext()
-			run2 = nil == err
+		if !t.stopped {
+			if stage && !run1 {
+				cmd1, done1, err = startNext()
+				run1 = nil == err
+			}
+			if !stage && !run2 {
+				cmd2, done2, err = startNext()
+				run2 = nil == err
+			}
 		}
 
 		select {
@@ -186,45 +196,64 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 
 			continue
 
-		case <-t.rSignal:
-			fmt.Fprintln(out, "[minisv] Doing graceful restart")
+		case <-t.sSignal:
+			fmt.Fprintln(out, "[minisv] Stopping task")
+			t.stopped = true
 
-			// castling of running processes
 			if stage {
-				cmd2, done2, err = startNext()
-				run2 = nil == err
-
-			} else {
-				cmd1, done1, err = startNext()
-				run1 = nil == err
-			}
-
-			if nil != err {
-				fmt.Fprintln(out,
-					"[minisv] Unable to start new instance, continue using old one")
-				continue
-			}
-
-			var exited bool
-			if stage {
-				exited = waitForErrChan(done2, time.Second*time.Duration(t.StartTime))
-			} else {
-				exited = waitForErrChan(done1, time.Second*time.Duration(t.StartTime))
-			}
-
-			if exited {
-				fmt.Fprintln(out,
-					"[minisv] New instance exited too fast, continue using old one")
-				continue
-			}
-
-			stage = !stage
-
-			fmt.Fprintln(out, "[minisv] New instance running, terminating old one")
-			if stage {
-				termChild(run2, cmd2, done2, t.Wait, out, nil)
-			} else {
 				termChild(run1, cmd1, done1, t.Wait, out, nil)
+				run1 = false
+			} else {
+				termChild(run2, cmd2, done2, t.Wait, out, nil)
+				run2 = false
+			}
+			continue
+
+		case <-t.rSignal:
+			if t.stopped {
+				t.stopped = false
+				fmt.Fprintln(out, "[minisv] Starting task")
+			} else {
+
+				fmt.Fprintln(out, "[minisv] Doing graceful restart")
+
+				// castling of running processes
+				if stage {
+					cmd2, done2, err = startNext()
+					run2 = nil == err
+
+				} else {
+					cmd1, done1, err = startNext()
+					run1 = nil == err
+				}
+
+				if nil != err {
+					fmt.Fprintln(out,
+						"[minisv] Unable to start new instance, continue using old one")
+					continue
+				}
+
+				var exited bool
+				if stage {
+					exited = waitForErrChan(done2, time.Second*time.Duration(t.StartTime))
+				} else {
+					exited = waitForErrChan(done1, time.Second*time.Duration(t.StartTime))
+				}
+
+				if exited {
+					fmt.Fprintln(out,
+						"[minisv] New instance exited too fast, continue using old one")
+					continue
+				}
+
+				stage = !stage
+
+				fmt.Fprintln(out, "[minisv] New instance running, terminating old one")
+				if stage {
+					termChild(run2, cmd2, done2, t.Wait, out, nil)
+				} else {
+					termChild(run1, cmd1, done1, t.Wait, out, nil)
+				}
 			}
 
 			continue

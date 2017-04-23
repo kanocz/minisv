@@ -22,9 +22,6 @@ func main() {
 	for _, task := range config.Tasks {
 		if !task.OneTime {
 			wg.Add(1)
-			task.cSignal = make(chan os.Signal)
-			task.rSignal = make(chan bool)
-			task.fSignal = make(chan bool)
 			go task.Loop(needExit, &wg)
 		}
 	}

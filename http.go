@@ -17,6 +17,7 @@ func httpInit() {
 	r.Route("/:id", func(r chi.Router) {
 		r.Get("/restart", httpRestartTask)
 		r.Get("/run", httpRunTask)
+		r.Get("/stop", httpStopTask)
 		r.Get("/term", httpSignalTask(syscall.SIGTERM))
 		r.Get("/hup", httpSignalTask(syscall.SIGHUP))
 		r.Get("/kill", httpSignalTask(syscall.SIGKILL))
@@ -63,6 +64,16 @@ func httpRunTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go task.Run()
+	_, _ = w.Write([]byte("ok"))
+}
+
+func httpStopTask(w http.ResponseWriter, r *http.Request) {
+	task := getTask(w, r, false)
+	if nil == task {
+		return
+	}
+
+	task.sSignal <- true
 	_, _ = w.Write([]byte("ok"))
 }
 
