@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -9,9 +10,21 @@ import (
 	"syscall"
 )
 
+const (
+	// AppVersion contains current application version for -version command flag
+	AppVersion = "1.0.0a"
+)
+
 func main() {
 
+	version := flag.Bool("version", false, "print lcvpn version")
 	flag.Parse()
+
+	if *version {
+		fmt.Println(AppVersion)
+		os.Exit(0)
+	}
+
 	if !readConfig() {
 		return
 	}
