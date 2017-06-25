@@ -1,10 +1,10 @@
 # minisv (mini supervisor)
 
 Service starter, easy start multiply services (for example in one docker
-container) with possibility to (gracefull) restart them via
-http. Gracefull restart is used for services supporting SO_REUSERPORT:
-new instance will started, waited X seconds to be sure that anything
-is ok and only then SIGTERM will be send to old one; if old one
+container or using systemd on regular system) with possibility to (gracefull)
+restart them via http. Gracefull restart is used for services supporting
+SO_REUSERPORT: new instance will started, waited X seconds to be sure that
+everything is ok and only then SIGTERM will be send to old one; if old one
 will not exit in Y time than SIGKILL also sent.
 
 It's also possible to run "one-time" actions like a repository pull one

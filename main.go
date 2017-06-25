@@ -12,7 +12,7 @@ import (
 
 const (
 	// AppVersion contains current application version for -version command flag
-	AppVersion = "1.0.0a"
+	AppVersion = "1.1.1a"
 )
 
 func main() {

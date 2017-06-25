@@ -27,3 +27,5 @@ _testmain.go
 minisv
 test*.json
 todo.txt
+debian/usr
+debian/etc
