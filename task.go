@@ -21,12 +21,12 @@ type Task struct {
 	StartTime int      `json:"startTime"`
 	OneTime   bool     `json:"oneTime"`
 	// hidden fields
+	stopped        bool           // indicate to don't restart after "die"
 	oneTimeRunning bool           // indicate that we're just running
 	oneTimeMutex   sync.Mutex     // mutex for oneTimeRunning
 	status         atomic.Value   // string like "none" (not started at all), "running", "finished", "restarting"
 	timeStarted    atomic.Value   // when task started (time.Time / nil)
 	timeFinished   atomic.Value   // last task finished time (time.Time / nil)
-	stopped        bool           // indicate to don't restart after "die"
 	name           string         // duplicate name from config
 	cSignal        chan os.Signal // send signal to process
 	rSignal        chan bool      // restart signal
@@ -130,7 +130,10 @@ itsDone:
 
 		case <-t.sSignal:
 			fmt.Fprintln(writer, "[minisv] Stopping task")
-			cmd.Process.Signal(syscall.SIGTERM)
+			err = cmd.Process.Signal(syscall.SIGTERM)
+			if nil != err {
+				fmt.Fprintln(writer, "[minisv] Error sending SIGTERM: ", err)
+			}
 			go func() {
 				time.Sleep(time.Duration(t.Wait) * time.Second)
 				killIt <- true
@@ -139,7 +142,10 @@ itsDone:
 		case <-killIt:
 			if !killCanceled {
 				fmt.Fprintln(writer, "[minisv] Killing task")
-				cmd.Process.Signal(syscall.SIGKILL)
+				err = cmd.Process.Signal(syscall.SIGKILL)
+				if nil != err {
+					fmt.Fprintln(writer, "[minisv] Error sending SIGKILL: ", err)
+				}
 			}
 
 		}
@@ -199,9 +205,8 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 				t.name, t.Command, err)
 			time.Sleep(time.Second * time.Duration(t.Pause))
 			return nil, nil, err
-		} else {
-			t.status.Store(okstatus)
 		}
+		t.status.Store(okstatus)
 
 		cmdDone := make(chan error)
 		go func() {
