@@ -74,6 +74,17 @@ func httpRunTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	task.oneTimeMutex.Lock()
+	running := task.oneTimeRunning
+	if !running {
+		task.oneTimeRunning = true
+	}
+	task.oneTimeMutex.Unlock()
+	if running {
+		_, _ = w.Write([]byte("just running"))
+		return
+	}
+
 	go task.Run()
 	_, _ = w.Write([]byte("ok"))
 }

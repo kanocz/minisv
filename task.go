@@ -21,15 +21,17 @@ type Task struct {
 	StartTime int      `json:"startTime"`
 	OneTime   bool     `json:"oneTime"`
 	// hidden fields
-	status       atomic.Value   // string like "none" (not started at all), "running", "finished", "restarting"
-	timeStarted  atomic.Value   // when task started (time.Time / nil)
-	timeFinished atomic.Value   // last task finished time (time.Time / nil)
-	stopped      bool           // indicate to don't restart after "die"
-	name         string         // duplicate name from config
-	cSignal      chan os.Signal // send signal to process
-	rSignal      chan bool      // restart signal
-	fSignal      chan bool      // log flush signal
-	sSignal      chan bool      // signal to stop task
+	oneTimeRunning bool           // indicate that we're just running
+	oneTimeMutex   sync.Mutex     // mutex for oneTimeRunning
+	status         atomic.Value   // string like "none" (not started at all), "running", "finished", "restarting"
+	timeStarted    atomic.Value   // when task started (time.Time / nil)
+	timeFinished   atomic.Value   // last task finished time (time.Time / nil)
+	stopped        bool           // indicate to don't restart after "die"
+	name           string         // duplicate name from config
+	cSignal        chan os.Signal // send signal to process
+	rSignal        chan bool      // restart signal
+	fSignal        chan bool      // log flush signal
+	sSignal        chan bool      // signal to stop task
 }
 
 // TaskStatus is simple struct suitable for marshaling
@@ -59,6 +61,12 @@ func (t *Task) GetStatus() TaskStatus {
 
 // Run task one time
 func (t *Task) Run() {
+
+	defer func() {
+		t.oneTimeMutex.Lock()
+		t.oneTimeRunning = false
+		t.oneTimeMutex.Unlock()
+	}()
 
 	t.cSignal = make(chan os.Signal)
 	t.sSignal = make(chan bool)
