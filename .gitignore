@@ -24,5 +24,6 @@ _testmain.go
 *.prof
 
 .vscode
-
-dockstarter
+minisv
+test*.json
+todo.txt
