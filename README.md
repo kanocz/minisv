@@ -89,10 +89,11 @@ docker run -v /var/log/minisv:/var/log/minisv container1
 using different *logfileprefix* prevents mixing of logs from different containers
 
 commands description:
-* *stop* - stop task until *restart* command
-* *restart* - start after *stop* OR _graceful restart_ if running (start new instance, wait if not crashed and then terminate old one)
+* *stop* - stop task until *restart* or *run* command
+* *restart* - start after *stop* OR _graceful restart_ if running (start new instance, wait if not crashed and then terminate old one), not for _ontime_ tasks
 * *term* - send SIGTERM to process
 * *hup* - send SIGHUP to process
 * *kill* - send SIGKILL to process
 * *run* - run _onetime_ task
-* *rotate* - close log and reopen (with different name while _logsuffixdate_ is used)
+* *rotate* - close log and reopen (with different name while _logsuffixdate_ is used), not for _onetime_ tasks
+* *status* - return current process status
