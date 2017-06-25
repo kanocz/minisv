@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -58,6 +59,10 @@ func (t *Task) GetStatus() TaskStatus {
 
 // Run task one time
 func (t *Task) Run() {
+
+	t.cSignal = make(chan os.Signal)
+	t.sSignal = make(chan bool)
+
 	// for log rotation we need layer in the middle
 	writer := logWithRotation(fmt.Sprintf("%s/%s%s.log",
 		config.LogDir, config.LogPrefix, t.name),
@@ -91,7 +96,47 @@ func (t *Task) Run() {
 
 	t.status.Store("running")
 
-	err = cmd.Wait()
+	cmdDone := make(chan error)
+	go func() {
+		cmdDone <- cmd.Wait()
+	}()
+
+	killIt := make(chan bool)
+	killCanceled := false
+
+itsDone:
+	for {
+		select {
+
+		case err = <-cmdDone:
+			killCanceled = true
+			break itsDone
+
+		case sig := <-t.cSignal:
+			fmt.Fprintln(writer, "[minisv] Sending ", sig,
+				" signal to process ", cmd.Process.Pid)
+			err = cmd.Process.Signal(sig)
+			if nil != err {
+				fmt.Fprintln(writer, "[minisv] Error sending ", sig, ": ", err)
+			}
+
+		case <-t.sSignal:
+			fmt.Fprintln(writer, "[minisv] Stopping task")
+			cmd.Process.Signal(syscall.SIGTERM)
+			go func() {
+				time.Sleep(time.Duration(t.Wait) * time.Second)
+				killIt <- true
+			}()
+
+		case <-killIt:
+			if !killCanceled {
+				fmt.Fprintln(writer, "[minisv] Killing task")
+				cmd.Process.Signal(syscall.SIGKILL)
+			}
+
+		}
+	}
+
 	if nil != err {
 		t.status.Store("finished with error: " + err.Error())
 		fmt.Fprintf(writer, "[minisv] Command %s (%s) ended with error: %v\n",

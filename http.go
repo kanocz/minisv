@@ -79,23 +79,34 @@ func httpRunTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func httpStopTask(w http.ResponseWriter, r *http.Request) {
-	task := getTask(w, r, false)
+	task := getTask(w, r, true)
 	if nil == task {
 		return
 	}
 
-	task.sSignal <- true
+	if nil != task.sSignal {
+		select {
+		case task.sSignal <- true:
+		default:
+		}
+	}
+
 	_, _ = w.Write([]byte("ok"))
 }
 
 func httpSignalTask(sig os.Signal) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		task := getTask(w, r, false)
+		task := getTask(w, r, true)
 		if nil == task {
 			return
 		}
 
-		task.cSignal <- sig
+		if nil != task.cSignal {
+			select {
+			case task.cSignal <- sig:
+			default:
+			}
+		}
 		_, _ = w.Write([]byte("ok"))
 	}
 }
