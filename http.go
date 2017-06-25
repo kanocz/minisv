@@ -9,6 +9,7 @@ import (
 
 	"github.com/pressly/chi"
 	"github.com/pressly/chi/middleware"
+	"github.com/pressly/chi/render"
 )
 
 func httpInit() {
@@ -22,6 +23,7 @@ func httpInit() {
 		r.Get("/hup", httpSignalTask(syscall.SIGHUP))
 		r.Get("/kill", httpSignalTask(syscall.SIGKILL))
 		r.Get("/rotate", httpLogRotateTask)
+		r.Get("/status", httpStatusOfTast)
 	})
 	log.Println(
 		http.ListenAndServe(
@@ -47,6 +49,15 @@ func getTask(w http.ResponseWriter, r *http.Request, allowOneTime bool) *Task {
 	return task
 }
 
+func httpStatusOfTast(w http.ResponseWriter, r *http.Request) {
+	task := getTask(w, r, true)
+	if nil == task {
+		return
+	}
+
+	render.JSON(w, r, task.GetStatus())
+}
+
 func httpRestartTask(w http.ResponseWriter, r *http.Request) {
 	task := getTask(w, r, false)
 	if nil == task {
@@ -58,7 +69,7 @@ func httpRestartTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func httpRunTask(w http.ResponseWriter, r *http.Request) {
-	task := getTask(w, r, false)
+	task := getTask(w, r, true)
 	if nil == task {
 		return
 	}

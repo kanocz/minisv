@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -19,12 +20,40 @@ type Task struct {
 	StartTime int      `json:"startTime"`
 	OneTime   bool     `json:"oneTime"`
 	// hidden fields
-	stopped bool           // indicate to don't restart after "die"
-	name    string         // duplicate name from config
-	cSignal chan os.Signal // send signal to process
-	rSignal chan bool      // restart signal
-	fSignal chan bool      // log flush signal
-	sSignal chan bool      // signal to stop task
+	status       atomic.Value   // string like "none" (not started at all), "running", "finished", "restarting"
+	timeStarted  atomic.Value   // when task started (time.Time / nil)
+	timeFinished atomic.Value   // last task finished time (time.Time / nil)
+	stopped      bool           // indicate to don't restart after "die"
+	name         string         // duplicate name from config
+	cSignal      chan os.Signal // send signal to process
+	rSignal      chan bool      // restart signal
+	fSignal      chan bool      // log flush signal
+	sSignal      chan bool      // signal to stop task
+}
+
+// TaskStatus is simple struct suitable for marshaling
+type TaskStatus struct {
+	Status   string    `json:"status"`
+	Started  time.Time `json:"started,omitempty"`
+	Finished time.Time `json:"finished,omitempty"`
+}
+
+// GetStatus return task's status in struct
+func (t *Task) GetStatus() TaskStatus {
+	result := TaskStatus{}
+	if status, ok := t.status.Load().(string); ok {
+		result.Status = status
+	} else {
+		result.Status = "not started"
+	}
+	if started, ok := t.timeStarted.Load().(time.Time); ok {
+		result.Started = started
+	}
+	if finished, ok := t.timeFinished.Load().(time.Time); ok {
+		result.Finished = finished
+	}
+
+	return result
 }
 
 // Run task one time
@@ -48,18 +77,29 @@ func (t *Task) Run() {
 		cmd.Dir = t.WorkDir
 	}
 
+	t.timeStarted.Store(time.Now())
+	t.status.Store("starting")
+
 	err := cmd.Start()
 	if nil != err {
 		fmt.Fprintf(writer, "[minisv] Error starting %s (%s): %v\n",
 			t.name, t.Command, err)
+		t.status.Store("start failed: " + err.Error())
+		t.timeFinished.Store(time.Now())
 		return
 	}
 
+	t.status.Store("running")
+
 	err = cmd.Wait()
 	if nil != err {
+		t.status.Store("finished with error: " + err.Error())
 		fmt.Fprintf(writer, "[minisv] Command %s (%s) ended with error: %v\n",
 			t.name, t.Command, err)
+	} else {
+		t.status.Store("finished")
 	}
+	t.timeFinished.Store(time.Now())
 }
 
 // Loop task runinng and restarting
@@ -88,7 +128,7 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 	// true - main is cmd1, false - main is cmd2 :)
 	stage := true
 
-	startNext := func() (*exec.Cmd, chan error, error) {
+	startNext := func(okstatus string) (*exec.Cmd, chan error, error) {
 		fmt.Fprintf(out, "[minisv] Starting %s %v\n", t.Command, t.Args)
 		cmd := exec.Command(t.Command, t.Args...)
 		cmd.Stdout = out
@@ -97,12 +137,17 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 			cmd.Dir = t.WorkDir
 		}
 
+		t.status.Store("starting")
+		t.timeStarted.Store(time.Now())
 		err = cmd.Start()
 		if nil != err {
+			t.status.Store("Error starting: " + err.Error())
 			fmt.Fprintf(out, "[minisv] Error starting %s (%s): %v\n",
 				t.name, t.Command, err)
 			time.Sleep(time.Second * time.Duration(t.Pause))
 			return nil, nil, err
+		} else {
+			t.status.Store(okstatus)
 		}
 
 		cmdDone := make(chan error)
@@ -120,11 +165,11 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 	for {
 		if !t.stopped {
 			if stage && !run1 {
-				cmd1, done1, err = startNext()
+				cmd1, done1, err = startNext("started")
 				run1 = nil == err
 			}
 			if !stage && !run2 {
-				cmd2, done2, err = startNext()
+				cmd2, done2, err = startNext("started")
 				run2 = nil == err
 			}
 		}
@@ -136,10 +181,14 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 
 			if stage {
 
+				t.timeFinished.Store(time.Now())
+
 				if nil == err {
 					fmt.Fprintln(out, string("[minisv] Main process normal exit"))
+					t.status.Store("finished")
 				} else {
 					fmt.Fprintln(out, "[minisv] Main process exited, ", err)
+					t.status.Store("finished with error: " + err.Error())
 				}
 
 			} else {
@@ -169,10 +218,14 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 
 			} else {
 
+				t.timeFinished.Store(time.Now())
+
 				if nil == err {
 					fmt.Fprintln(out, "[minisv] Main process normal exit")
+					t.status.Store("finished")
 				} else {
 					fmt.Fprintln(out, "[minisv] Main process exited, ", err)
+					t.status.Store("finished with error: " + err.Error())
 				}
 
 			}
@@ -207,6 +260,10 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 				termChild(run2, cmd2, done2, t.Wait, out, nil)
 				run2 = false
 			}
+
+			t.timeFinished.Store(time.Now())
+			t.status.Store("stoped")
+
 			continue
 
 		case <-t.rSignal:
@@ -219,15 +276,16 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 
 				// castling of running processes
 				if stage {
-					cmd2, done2, err = startNext()
+					cmd2, done2, err = startNext("restart validation")
 					run2 = nil == err
 
 				} else {
-					cmd1, done1, err = startNext()
+					cmd1, done1, err = startNext("restart validation")
 					run1 = nil == err
 				}
 
 				if nil != err {
+					t.status.Store("new instance failed")
 					fmt.Fprintln(out,
 						"[minisv] Unable to start new instance, continue using old one")
 					continue
@@ -241,6 +299,7 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 				}
 
 				if exited {
+					t.status.Store("new instance exited too fast")
 					fmt.Fprintln(out,
 						"[minisv] New instance exited too fast, continue using old one")
 					continue
@@ -248,6 +307,7 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 
 				stage = !stage
 
+				t.status.Store("restart ok")
 				fmt.Fprintln(out, "[minisv] New instance running, terminating old one")
 				if stage {
 					termChild(run2, cmd2, done2, t.Wait, out, nil)
