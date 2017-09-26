@@ -7,15 +7,15 @@ import (
 	"os"
 	"syscall"
 
-	"github.com/pressly/chi"
-	"github.com/pressly/chi/middleware"
-	"github.com/pressly/chi/render"
+	"github.com/go-chi/chi"
+	"github.com/go-chi/chi/middleware"
+	"github.com/go-chi/render"
 )
 
 func httpInit() {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
-	r.Route("/:id", func(r chi.Router) {
+	r.Route("/{id}", func(r chi.Router) {
 		r.Get("/restart", httpRestartTask)
 		r.Get("/run", httpRunTask)
 		r.Get("/stop", httpStopTask)
