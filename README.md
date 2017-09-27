@@ -19,9 +19,9 @@ Also is possible to add/remove tasks online via HTTP-requests.
 
 For restarting, sending signals and task add/remove next http schema used:
 
-*GET* `http://[addr]:[port]/[taskname]/[stop|restart|term|hup|kill|run|rotate]`
-*POST* `http://[addr]:[port]/[taskname]` (with json description of task as http body)
-*DELETE* `http://[addr]:[port]/[taskname]`
+- *GET* `http://[addr]:[port]/[taskname]/[stop|restart|term|hup|kill|run|rotate]`
+- *POST* `http://[addr]:[port]/[taskname]` (with json description of task as http body)  
+- *DELETE* `http://[addr]:[port]/[taskname]`
 
 for example:
 
