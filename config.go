@@ -6,6 +6,8 @@ import (
 	"io/ioutil"
 	"log"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -17,18 +19,27 @@ func (d *configDuration) UnmarshalJSON(b []byte) error {
 	return err
 }
 
-var config struct {
+func (d *configDuration) MarshalJSON() ([]byte, error) {
+	return ([]byte)("\"" + (*time.Duration)(d).String() + "\""), nil
+}
+
+type Config struct {
 	LogDir        string           `json:"logdir"`
 	LogPrefix     string           `json:"logfileprefix"`
 	LogSuffixDate string           `json:"logsuffixdate"`
 	LogDate       string           `json:"logdate"`
-	LogReopen     configDuration   `json:"logreopen"`
+	LogReopen     *configDuration  `json:"logreopen"`
 	Tasks         map[string]*Task `json:"tasks"`
 	HTTP          struct {
 		Addr string `json:"address"`
 		Port int    `json:"port"`
 	} `json:"http"`
 }
+
+var (
+	aConfig          atomic.Value
+	configChangeLock sync.Mutex
+)
 
 var (
 	configfile = flag.String("config", "/etc/minisv.json",
@@ -42,6 +53,8 @@ func readConfig() bool {
 		return false
 	}
 
+	var config Config
+
 	err = json.Unmarshal(data, &config)
 	if nil != err {
 		log.Println("Error parsing config file: ", err)
@@ -52,5 +65,28 @@ func readConfig() bool {
 		task.name = name
 	}
 
+	aConfig.Store(config)
+
 	return true
+}
+
+var (
+	saveMutex sync.Mutex
+)
+
+func saveConfig() {
+	saveMutex.Lock()
+	defer saveMutex.Unlock()
+
+	data, err := json.MarshalIndent(aConfig.Load().(Config), "", "  ")
+	if nil != err {
+		log.Println("Error json encoding config for save:", err)
+		return
+	}
+
+	err = ioutil.WriteFile(*configfile, data, 0644)
+	if nil != err {
+		log.Println("Error on config save:", err)
+		return
+	}
 }

@@ -32,6 +32,7 @@ type Task struct {
 	rSignal        chan bool      // restart signal
 	fSignal        chan bool      // log flush signal
 	sSignal        chan bool      // signal to stop task
+	eSignal        chan bool      // exit loop, trigered on task delete
 }
 
 // TaskStatus is simple struct suitable for marshaling
@@ -70,6 +71,8 @@ func (t *Task) Run() {
 
 	t.cSignal = make(chan os.Signal)
 	t.sSignal = make(chan bool)
+
+	config := aConfig.Load().(Config)
 
 	// for log rotation we need layer in the middle
 	writer := logWithRotation(fmt.Sprintf("%s/%s%s.log",
@@ -170,6 +173,9 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 	t.rSignal = make(chan bool)
 	t.fSignal = make(chan bool)
 	t.sSignal = make(chan bool)
+	t.eSignal = make(chan bool)
+
+	config := aConfig.Load().(Config)
 
 	// for log rotation we need layer in the middle
 	out := logWithRotation(fmt.Sprintf("%s/%s%s.log",
@@ -378,6 +384,15 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 
 		case <-cExit:
 			fmt.Fprintln(out, "[minisv] Sending term signal to childs")
+			smallWg := sync.WaitGroup{}
+			smallWg.Add(2)
+			go termChild(run1, cmd1, done1, t.Wait, out, &smallWg)
+			go termChild(run2, cmd2, done2, t.Wait, out, &smallWg)
+			smallWg.Wait()
+			return
+
+		case <-t.eSignal:
+			fmt.Fprintln(out, "[minisv] {taskExit} Sending term signal to childs")
 			smallWg := sync.WaitGroup{}
 			smallWg.Add(2)
 			go termChild(run1, cmd1, done1, t.Wait, out, &smallWg)

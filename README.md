@@ -15,15 +15,22 @@ in config or `rotate` command via http. Using `logdate` it's possible to
 add current date/time as log file name sufix (using class golang format).
 This affects only permanent task, not `oneTime`.
 
-for restarting or sending signals next http schema used:
+Also is possible to add/remove tasks online via HTTP-requests.
 
-`http://[addr]:[port]/[taskname]/[stop|restart|term|hup|kill|run|rotate]`
+For restarting, sending signals and task add/remove next http schema used:
 
-for exampe:
-```
-curl -i http://127.0.0.1:3443/sleep1800/kill
-curl -i http://127.0.0.1:3443/sleep1800/restart
-curl -i http://127.0.0.1:3443/pull/run
+*GET* `http://[addr]:[port]/[taskname]/[stop|restart|term|hup|kill|run|rotate]`
+*POST* `http://[addr]:[port]/[taskname]` (with json description of task as http body)
+*DELETE* `http://[addr]:[port]/[taskname]`
+
+for example:
+
+```bash
+curl -d '{"command": "/bin/sleep","args": ["1800"],"workdir": "/home"}' -H "Content-Type: application/json" -X 'POST' 'http://127.0.0.1:3443/sleep1800'
+curl -i 'http://127.0.0.1:3443/sleep1800/kill'
+curl -i 'http://127.0.0.1:3443/sleep1800/restart'
+curl -X 'DELETE' 'http://127.0.0.1:3443/sleep3'
+curl -i 'http://127.0.0.1:3443/pull/run'
 ```
 
 Example *Dockerfile* for use with minisv:
@@ -82,13 +89,15 @@ while minisv.json contains
 ```
 
 starting with
+
 ```bash
-docker run -v /var/log/minisv:/var/log/minisv container1
+docker run -v '/var/log/minisv:/var/log/minisv' 'container1'
 ```
 
 using different *logfileprefix* prevents mixing of logs from different containers
 
 commands description:
+
 * *stop* - stop task until *restart* or *run* command
 * *restart* - start after *stop* OR _graceful restart_ if running (start new instance, wait if not crashed and then terminate old one), not for _ontime_ tasks
 * *term* - send SIGTERM to process

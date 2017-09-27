@@ -12,12 +12,17 @@ import (
 
 const (
 	// AppVersion contains current application version for -version command flag
-	AppVersion = "1.1.1a"
+	AppVersion = "1.2.0"
+)
+
+var (
+	needExit = make(chan bool)
+	tasksWg  = sync.WaitGroup{}
 )
 
 func main() {
 
-	version := flag.Bool("version", false, "print lcvpn version")
+	version := flag.Bool("version", false, "print minisv version")
 	flag.Parse()
 
 	if *version {
@@ -29,13 +34,12 @@ func main() {
 		return
 	}
 
-	needExit := make(chan bool)
-	wg := sync.WaitGroup{}
+	config := aConfig.Load().(Config)
 
 	for _, task := range config.Tasks {
 		if !task.OneTime {
-			wg.Add(1)
-			go task.Loop(needExit, &wg)
+			tasksWg.Add(1)
+			go task.Loop(needExit, &tasksWg)
 		}
 	}
 
@@ -56,6 +60,6 @@ func main() {
 	log.Println("Exiting...")
 
 	close(needExit)
-	wg.Wait()
+	tasksWg.Wait()
 
 }
