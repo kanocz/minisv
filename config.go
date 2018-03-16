@@ -23,6 +23,7 @@ func (d *configDuration) MarshalJSON() ([]byte, error) {
 	return ([]byte)("\"" + (*time.Duration)(d).String() + "\""), nil
 }
 
+// Config represents not only configuration but also current running state
 type Config struct {
 	LogDir        string           `json:"logdir"`
 	LogPrefix     string           `json:"logfileprefix"`

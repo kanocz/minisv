@@ -20,6 +20,7 @@ func httpInit() {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 
+	r.Get("/", httpAllStatus)
 	r.Route("/{id}", func(r chi.Router) {
 		r.Post("/", httpCreateTask)
 		r.Delete("/", httpDeleteTask)
@@ -60,6 +61,27 @@ func getTask(w http.ResponseWriter, r *http.Request, allowOneTime bool) *Task {
 	}
 
 	return task
+}
+
+type httpAllStatusItem struct {
+	Command string     `json:"command"`
+	Args    []string   `json:"args"`
+	OneTime bool       `json:"onetime"`
+	Status  TaskStatus `json:"status"`
+}
+
+func httpAllStatus(w http.ResponseWriter, r *http.Request) {
+	config := aConfig.Load().(Config)
+	result := map[string]httpAllStatusItem{}
+
+	for name, task := range config.Tasks {
+		result[name] = httpAllStatusItem{
+			Command: task.Command,
+			Args:    task.Args,
+			OneTime: task.OneTime,
+			Status:  task.GetStatus(),
+		}
+	}
 }
 
 func httpStatusOfTast(w http.ResponseWriter, r *http.Request) {
