@@ -82,6 +82,8 @@ func httpAllStatus(w http.ResponseWriter, r *http.Request) {
 			Status:  task.GetStatus(),
 		}
 	}
+
+	render.JSON(w, r, result)
 }
 
 func httpStatusOfTast(w http.ResponseWriter, r *http.Request) {
