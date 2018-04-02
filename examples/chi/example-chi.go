@@ -5,10 +5,10 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/go-chi/chi"
+	"github.com/go-chi/chi/middleware"
+	"github.com/go-chi/render"
 	reuseport "github.com/kavu/go_reuseport"
-	"github.com/pressly/chi"
-	"github.com/pressly/chi/middleware"
-	"github.com/pressly/chi/render"
 	"github.com/tylerb/graceful"
 )
 
@@ -32,7 +32,7 @@ func main() {
 	r.Use(middleware.Timeout(10 * time.Second))
 
 	r.Route("/api", func(r chi.Router) {
-		r.Route("/hello/:name", func(r chi.Router) {
+		r.Route("/hello/{name}", func(r chi.Router) {
 			r.Get("/", helloUser)
 		})
 	})
