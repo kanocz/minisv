@@ -32,8 +32,13 @@ type Config struct {
 	LogReopen     *configDuration  `json:"logreopen"`
 	Tasks         map[string]*Task `json:"tasks"`
 	HTTP          struct {
-		Addr string `json:"address"`
-		Port int    `json:"port"`
+		Addr       string `json:"address"`
+		Port       int    `json:"port"`
+		ServerCert string `json:"servercert"`
+		ServerKey  string `json:"serverkey"`
+		ClientCert string `json:"clientcert"`
+		User       string `json:"user"`
+		Pass       string `json:"password"`
 	} `json:"http"`
 }
 

@@ -107,3 +107,46 @@ commands description:
 * *run* - run _onetime_ task
 * *rotate* - close log and reopen (with different name while _logsuffixdate_ is used), not for _onetime_ tasks
 * *status* - return current process status
+
+
+## HTTPS & Auth
+
+if no user, password and certificate parameters are specified in config _minisv_ will work with plain HTTP and no authentification (suitable for listening on localhost and no access of third people to server).
+
+If user and password (bcrypted hash) specified in http session http-basic auth is on.
+```json
+"http": {
+        "address": "0.0.0.0",
+        "port": 3443,
+        "user": "admin",
+        "password": "$2a$14$ajq8Q7fbtA0QvXpdCq7Jcuy.Rx1h/L4J60Otx.gyNLbAYctGMJ9tK"
+    }
+```
+
+For more security it's possible to turn on HTTPS:
+```json
+"http": {
+        "address": "0.0.0.0",
+        "port": 3443,
+        "user": "admin",
+        "password": "$2a$14$ajq8Q7fbtA0QvXpdCq7Jcuy.Rx1h/L4J60Otx.gyNLbAYctGMJ9tK",
+        "servercert": "server.crt",
+        "serverkey": "server.key"
+    }
+```
+
+And as most-secure it's possible to turn on verifing of client certificate:
+
+```json
+"http": {
+        "address": "0.0.0.0",
+        "port": 3443,
+        "user": "admin",
+        "password": "$2a$14$ajq8Q7fbtA0QvXpdCq7Jcuy.Rx1h/L4J60Otx.gyNLbAYctGMJ9tK",
+        "servercert": "server.crt",
+        "serverkey": "server.key",
+        "clientcert": client.crt"
+    }
+```
+
+and yes, it's true - it's possible combinate https-client-auth with http-basic-auth in the same time and both will be required at once.

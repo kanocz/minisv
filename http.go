@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -13,12 +15,48 @@ import (
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/middleware"
 	"github.com/go-chi/render"
+	"golang.org/x/crypto/bcrypt"
 )
+
+func _requestBasicAuth(w http.ResponseWriter) {
+	w.Header().Add("WWW-Authenticate", `Basic realm="minisv"`)
+	w.WriteHeader(http.StatusUnauthorized)
+}
+
+func basicAuth(user string, passwordHash string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			username, password, ok := r.BasicAuth()
+			if !ok {
+				_requestBasicAuth(w)
+				return
+			}
+
+			if user != username {
+				_requestBasicAuth(w)
+				return
+			}
+
+			if nil != bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password)) {
+				_requestBasicAuth(w)
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
 
 func httpInit() {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+
+	config := aConfig.Load().(Config)
+
+	if "" != config.HTTP.User && "" != config.HTTP.Pass {
+		r.Use(basicAuth(config.HTTP.User, config.HTTP.Pass))
+	}
 
 	r.Get("/", httpAllStatus)
 	r.Route("/{id}", func(r chi.Router) {
@@ -34,11 +72,40 @@ func httpInit() {
 		r.Get("/status", httpStatusOfTast)
 	})
 
-	config := aConfig.Load().(Config)
+	listenString := fmt.Sprintf("%s:%d", config.HTTP.Addr, config.HTTP.Port)
 
-	log.Println(
-		http.ListenAndServe(
-			fmt.Sprintf("%s:%d", config.HTTP.Addr, config.HTTP.Port), r))
+	if "" == config.HTTP.ServerCert || "" == config.HTTP.ServerKey {
+		log.Println(
+			http.ListenAndServe(
+				listenString, r))
+	} else {
+		if "" == config.HTTP.ClientCert {
+			log.Println(
+				http.ListenAndServeTLS(
+					listenString, config.HTTP.ServerCert, config.HTTP.ServerKey, r))
+
+		} else {
+
+			clientCert, err := ioutil.ReadFile(config.HTTP.ClientCert)
+			if nil != err {
+				log.Fatalln("Error loading client cert:", err)
+			}
+			clientCertPool := x509.NewCertPool()
+			clientCertPool.AppendCertsFromPEM(clientCert)
+			srv := &http.Server{
+				Addr:    listenString,
+				Handler: r,
+				TLSConfig: &tls.Config{
+					ClientAuth: tls.RequireAndVerifyClientCert,
+					ClientCAs:  clientCertPool,
+				},
+			}
+			log.Println(
+				srv.ListenAndServeTLS(config.HTTP.ServerCert, config.HTTP.ServerKey))
+
+		}
+	}
+
 }
 
 func getTask(w http.ResponseWriter, r *http.Request, allowOneTime bool) *Task {
