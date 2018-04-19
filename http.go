@@ -353,6 +353,7 @@ func httpCreateTask(w http.ResponseWriter, r *http.Request) {
 	for name, task := range config.Tasks {
 		newTasks[name] = task
 	}
+	task.name = name
 	newTasks[name] = &task
 
 	config.Tasks = newTasks
