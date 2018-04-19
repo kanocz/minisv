@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"log"
 	"os"
@@ -61,7 +62,7 @@ func (t *Task) GetStatus() TaskStatus {
 }
 
 // Run task one time
-func (t *Task) Run() {
+func (t *Task) Run(input []byte) {
 
 	defer func() {
 		t.oneTimeMutex.Lock()
@@ -89,6 +90,9 @@ func (t *Task) Run() {
 	cmd := exec.Command(t.Command, t.Args...)
 	cmd.Stdout = writer
 	cmd.Stderr = writer
+	if nil != input {
+		cmd.Stdin = bytes.NewReader(input)
+	}
 	if "" != t.WorkDir {
 		cmd.Dir = t.WorkDir
 	}

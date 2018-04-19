@@ -10,6 +10,10 @@ will not exit in Y time than SIGKILL also sent.
 It's also possible to run "one-time" actions like a repository pull one
 webhook and so on (need to have `oneTime` setted to `true`).
 
+In last version it's possible to pass data on standart input of "one-time"
+tasks (using *POST* method), for example, for creating configs before
+adding new tasks.
+
 Possibility to "rotate" logs using HUP signal, using `logreload` variable
 in config or `rotate` command via http. Using `logdate` it's possible to
 add current date/time as log file name sufix (using class golang format).
@@ -21,6 +25,7 @@ For restarting, sending signals and task add/remove next http schema used:
 
 - *GET* `http://[addr]:[port]/` (return basic status on all tasks)
 - *GET* `http://[addr]:[port]/[taskname]/[stop|restart|term|hup|kill|run|rotate]`
+- *POST* `http://[addr]:[port]/[taskname]/run` (run one-time task with data on standart input)
 - *POST* `http://[addr]:[port]/[taskname]` (with json description of task as http body)  
 - *DELETE* `http://[addr]:[port]/[taskname]`
 
@@ -32,6 +37,7 @@ curl -i 'http://127.0.0.1:3443/sleep1800/kill'
 curl -i 'http://127.0.0.1:3443/sleep1800/restart'
 curl -X 'DELETE' 'http://127.0.0.1:3443/sleep3'
 curl -i 'http://127.0.0.1:3443/pull/run'
+curl -i -X 'POST' -d '@/tmp/image.jpeg' 'http://127.0.0.1:3443/imgsave/run'
 ```
 
 Example *Dockerfile* for use with minisv:
@@ -145,7 +151,7 @@ And as most-secure it's possible to turn on verifing of client certificate:
         "password": "$2a$14$ajq8Q7fbtA0QvXpdCq7Jcuy.Rx1h/L4J60Otx.gyNLbAYctGMJ9tK",
         "servercert": "server.crt",
         "serverkey": "server.key",
-        "clientcert": client.crt"
+        "clientcert": "client.crt"
     }
 ```
 

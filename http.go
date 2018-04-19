@@ -64,6 +64,7 @@ func httpInit() {
 		r.Delete("/", httpDeleteTask)
 		r.Get("/restart", httpRestartTask)
 		r.Get("/run", httpRunTask)
+		r.Post("/run", httpRunTaskWithInput)
 		r.Get("/stop", httpStopTask)
 		r.Get("/term", httpSignalTask(syscall.SIGTERM))
 		r.Get("/hup", httpSignalTask(syscall.SIGHUP))
@@ -189,7 +190,44 @@ func httpRunTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go task.Run()
+	go task.Run(nil)
+	_, _ = w.Write([]byte("ok"))
+}
+
+func httpRunTaskWithInput(w http.ResponseWriter, r *http.Request) {
+	if nil == r.Body {
+		_, _ = w.Write([]byte("no body"))
+		return
+	}
+
+	defer r.Body.Close()
+	body, err := ioutil.ReadAll(r.Body)
+	if nil != err {
+		_, _ = w.Write([]byte("body read error: " + err.Error()))
+		return
+	}
+	if nil == body {
+		_, _ = w.Write([]byte("no body readed"))
+		return
+	}
+
+	task := getTask(w, r, true)
+	if nil == task {
+		return
+	}
+
+	task.oneTimeMutex.Lock()
+	running := task.oneTimeRunning
+	if !running {
+		task.oneTimeRunning = true
+	}
+	task.oneTimeMutex.Unlock()
+	if running {
+		_, _ = w.Write([]byte("just running"))
+		return
+	}
+
+	go task.Run(body)
 	_, _ = w.Write([]byte("ok"))
 }
 
