@@ -68,8 +68,13 @@ func logWithRotation(filename string, timeSuffixFormat string, rotate chan bool,
 					}
 					return
 				}
-				_, err := out.WriteString(
-					fmt.Sprintf("%s: %s", time.Now().Format(timeFormat), str))
+				var err error
+				if "" != timeFormat {
+					_, err = out.WriteString(
+						fmt.Sprintf("%s: %s", time.Now().Format(timeFormat), str))
+				} else {
+					_, err = out.WriteString(str)
+				}
 				if nil != err {
 					log.Println("Error writing to output file: ", err)
 				}
