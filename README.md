@@ -156,3 +156,28 @@ And as most-secure it's possible to turn on verifing of client certificate:
 ```
 
 and yes, it's true - it's possible combinate https-client-auth with http-basic-auth in the same time and both will be required at once.
+
+## Resource limits
+
+it's possible to set global limits (like calling ulimit just before minisv) by setting individual options on `limits` array like this:
+```json
+
+{
+    "logdir": "/var/log/minisv",
+    "limits": [
+        {
+            "type": "nofile",
+            "cur":  2048,
+            "max":  4096
+        },
+        {
+            "type": "nproc",
+            "cur":  16384,
+            "max":  16384
+        }
+    ],
+    "tasks": {
+        ......
+    }
+}
+```

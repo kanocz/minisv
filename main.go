@@ -36,6 +36,8 @@ func main() {
 
 	config := aConfig.Load().(Config)
 
+	processRLimits(config.Limits)
+
 	for _, task := range config.Tasks {
 		if !task.OneTime {
 			tasksWg.Add(1)

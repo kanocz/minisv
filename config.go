@@ -31,6 +31,7 @@ type Config struct {
 	LogDate       string           `json:"logdate"`
 	LogReopen     *configDuration  `json:"logreopen"`
 	Tasks         map[string]*Task `json:"tasks"`
+	Limits        []configRLimit   `json:"limits"`
 	HTTP          struct {
 		Addr       string `json:"address"`
 		Port       int    `json:"port"`
