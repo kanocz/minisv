@@ -34,6 +34,8 @@ func main() {
 		return
 	}
 
+	log.Println("Starting...")
+
 	config := aConfig.Load().(Config)
 
 	processRLimits(config.Limits)
@@ -45,9 +47,7 @@ func main() {
 		}
 	}
 
-	httpInit()
-
-	log.Println("Running...")
+	go httpInit()
 
 	// log rotation on HUP and on timer
 	go rotateOnHUP()
@@ -56,6 +56,8 @@ func main() {
 	exitChan := make(chan os.Signal, 1)
 	signal.Notify(exitChan, syscall.SIGTERM)
 	signal.Notify(exitChan, syscall.SIGINT)
+
+	log.Println("Running...")
 
 	<-exitChan
 
