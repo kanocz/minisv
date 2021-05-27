@@ -15,7 +15,7 @@ import (
 func helloUser(w http.ResponseWriter, r *http.Request) {
 
 	name := chi.URLParam(r, "name")
-	if "" == name {
+	if name == "" {
 		name = "world"
 	}
 
@@ -28,7 +28,6 @@ func main() {
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.CloseNotify)
 	r.Use(middleware.Timeout(10 * time.Second))
 
 	r.Route("/api", func(r chi.Router) {
