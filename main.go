@@ -12,7 +12,7 @@ import (
 
 const (
 	// AppVersion contains current application version for -version command flag
-	AppVersion = "1.2.0"
+	AppVersion = "1.2.1"
 )
 
 var (
