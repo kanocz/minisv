@@ -54,7 +54,7 @@ func httpInit() {
 
 	config := aConfig.Load().(Config)
 
-	if "" != config.HTTP.User && "" != config.HTTP.Pass {
+	if config.HTTP.User != "" && config.HTTP.Pass != "" {
 		r.Use(basicAuth(config.HTTP.User, config.HTTP.Pass))
 	}
 
@@ -75,12 +75,12 @@ func httpInit() {
 
 	listenString := fmt.Sprintf("%s:%d", config.HTTP.Addr, config.HTTP.Port)
 
-	if "" == config.HTTP.ServerCert || "" == config.HTTP.ServerKey {
+	if config.HTTP.ServerCert == "" || config.HTTP.ServerKey == "" {
 		log.Println(
 			http.ListenAndServe(
 				listenString, r))
 	} else {
-		if "" == config.HTTP.ClientCert {
+		if config.HTTP.ClientCert == "" {
 			log.Println(
 				http.ListenAndServeTLS(
 					listenString, config.HTTP.ServerCert, config.HTTP.ServerKey, r))
@@ -322,7 +322,7 @@ func httpCreateTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	name := chi.URLParam(r, "id")
-	if "" == name {
+	if name == "" {
 		return
 	}
 
@@ -333,7 +333,7 @@ func httpCreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if "" == task.Command {
+	if task.Command == "" {
 		return
 	}
 

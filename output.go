@@ -13,7 +13,7 @@ import (
 
 func openOrStdout(filename string, timeFormat string) *os.File {
 	outName := filename
-	if "" != timeFormat {
+	if timeFormat != "" {
 		outName = fmt.Sprintf("%s.%s", filename, time.Now().Format(timeFormat))
 	}
 
@@ -69,7 +69,7 @@ func logWithRotation(filename string, timeSuffixFormat string, rotate chan bool,
 					return
 				}
 				var err error
-				if "" != timeFormat {
+				if timeFormat != "" {
 					_, err = out.WriteString(
 						fmt.Sprintf("%s: %s", time.Now().Format(timeFormat), str))
 				} else {
@@ -116,12 +116,14 @@ func rotateEveryPeriod() {
 	every := time.Duration(*config.LogReopen)
 
 	// if no value present in config
-	if 0 == every {
+	if every == 0 {
 		return
 	}
 
+	log.Println("Rotate logs every ", every)
+
 	// align time in so ugly way :)
-	time.Sleep(time.Now().Truncate(every).Add(every).Sub(time.Now()))
+	time.Sleep(time.Until(time.Now().Truncate(every).Add(every)))
 
 	go rotateLogs()
 	ticker := time.NewTicker(every)

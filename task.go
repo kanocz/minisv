@@ -93,7 +93,7 @@ func (t *Task) Run(input []byte) {
 	if nil != input {
 		cmd.Stdin = bytes.NewReader(input)
 	}
-	if "" != t.WorkDir {
+	if t.WorkDir != "" {
 		cmd.Dir = t.WorkDir
 	}
 
@@ -202,7 +202,7 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 		cmd := exec.Command(t.Command, t.Args...)
 		cmd.Stdout = out
 		cmd.Stderr = out
-		if "" != t.WorkDir {
+		if t.WorkDir != "" {
 			cmd.Dir = t.WorkDir
 		}
 
