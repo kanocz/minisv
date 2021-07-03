@@ -1,6 +1,14 @@
 {
     "logdir": "/var/log/minisv",
     "logfileprefix": "container1-",
+    "graylog": {
+        "remote": "graylog.example.com",
+        "level": 1,
+        "addfields": {
+            "_some_info": "foo",
+            "_some_env_var": "bar"
+        }
+    },
     "tasks": {
         "redis": {
             "command": "/usr/bin/redis-server",

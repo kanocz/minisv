@@ -78,7 +78,8 @@ func (t *Task) Run(input []byte) {
 	// for log rotation we need layer in the middle
 	writer := logWithRotation(fmt.Sprintf("%s/%s%s.log",
 		config.LogDir, config.LogPrefix, t.name),
-		config.LogSuffixDate, t.fSignal, config.LogDate)
+		config.LogSuffixDate, t.fSignal, config.LogDate,
+		t.name, config.GrayLog)
 	defer func() {
 		err := writer.Close()
 		if nil != err {
@@ -184,7 +185,8 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 	// for log rotation we need layer in the middle
 	out := logWithRotation(fmt.Sprintf("%s/%s%s.log",
 		config.LogDir, config.LogPrefix, t.name),
-		config.LogSuffixDate, t.fSignal, config.LogDate)
+		config.LogSuffixDate, t.fSignal, config.LogDate,
+		t.name, config.GrayLog)
 	defer func() {
 		err := out.Close()
 		if nil != err {

@@ -5,6 +5,7 @@ import (
 	"flag"
 	"io/ioutil"
 	"log"
+	"net"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,6 +24,13 @@ func (d *configDuration) MarshalJSON() ([]byte, error) {
 	return ([]byte)("\"" + (*time.Duration)(d).String() + "\""), nil
 }
 
+type grayLogConfig struct {
+	Remote    string                 `json:"remote"`
+	socket    *net.UDPConn           // udp connection
+	Level     int                    `json:"level"`
+	AddFields map[string]interface{} `json:"addfields"`
+}
+
 // Config represents not only configuration but also current running state
 type Config struct {
 	LogDir        string           `json:"logdir"`
@@ -30,6 +38,7 @@ type Config struct {
 	LogSuffixDate string           `json:"logsuffixdate"`
 	LogDate       string           `json:"logdate"`
 	LogReopen     *configDuration  `json:"logreopen"`
+	GrayLog       grayLogConfig    `json:"graylog"`
 	Tasks         map[string]*Task `json:"tasks"`
 	Limits        []configRLimit   `json:"limits"`
 	HTTP          struct {
@@ -70,6 +79,19 @@ func readConfig() bool {
 
 	for name, task := range config.Tasks {
 		task.name = name
+	}
+
+	if config.GrayLog.Remote != "" {
+		addr, err := net.ResolveUDPAddr("udp", config.GrayLog.Remote)
+		if err != nil {
+			log.Println("invalid graylog remote: ", err)
+		} else {
+			config.GrayLog.socket, err = net.DialUDP("udp", nil, addr)
+			if err != nil {
+				log.Println("unable to create UDP socket for graylog: ", err)
+			}
+		}
+
 	}
 
 	aConfig.Store(config)
