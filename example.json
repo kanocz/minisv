@@ -1,6 +1,9 @@
 {
     "logdir": "/var/log/minisv",
     "logfileprefix": "container1-",
+    "logreopen": "1h",
+    "logsuffixdate": "20060102.150405",
+    "logdate": "2006/01/02 15:04:05",
     "graylog": {
         "remote": "graylog.example.com",
         "level": 1,
