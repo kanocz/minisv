@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"syscall"
 	"time"
 
@@ -48,6 +50,20 @@ func basicAuth(user string, passwordHash string) func(http.Handler) http.Handler
 }
 
 func httpInit() {
+	srv := httpStart()
+
+	// wait for USR1 signal to restart server (manly for certificates reload)
+	user1Chan := make(chan os.Signal, 1)
+	signal.Notify(user1Chan, syscall.SIGUSR1)
+	for range user1Chan {
+		log.Println("Restarting http server...")
+		srv.Shutdown(context.Background())
+		srv = httpStart()
+	}
+
+}
+
+func httpStart() *http.Server {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
@@ -75,38 +91,34 @@ func httpInit() {
 
 	listenString := fmt.Sprintf("%s:%d", config.HTTP.Addr, config.HTTP.Port)
 
-	if config.HTTP.ServerCert == "" || config.HTTP.ServerKey == "" {
-		log.Println(
-			http.ListenAndServe(
-				listenString, r))
-	} else {
-		if config.HTTP.ClientCert == "" {
-			log.Println(
-				http.ListenAndServeTLS(
-					listenString, config.HTTP.ServerCert, config.HTTP.ServerKey, r))
+	srv := &http.Server{
+		Addr:    listenString,
+		Handler: r,
+	}
 
-		} else {
-
+	if config.HTTP.ServerCert != "" && config.HTTP.ServerKey != "" {
+		// HTTPS
+		if config.HTTP.ClientCert != "" {
 			clientCert, err := os.ReadFile(config.HTTP.ClientCert)
 			if nil != err {
 				log.Fatalln("Error loading client cert:", err)
 			}
 			clientCertPool := x509.NewCertPool()
 			clientCertPool.AppendCertsFromPEM(clientCert)
-			srv := &http.Server{
-				Addr:    listenString,
-				Handler: r,
-				TLSConfig: &tls.Config{
-					ClientAuth: tls.RequireAndVerifyClientCert,
-					ClientCAs:  clientCertPool,
-				},
+			srv.TLSConfig = &tls.Config{
+				ClientAuth: tls.RequireAndVerifyClientCert,
+				ClientCAs:  clientCertPool,
 			}
-			log.Println(
-				srv.ListenAndServeTLS(config.HTTP.ServerCert, config.HTTP.ServerKey))
 
 		}
+
+		go log.Println(srv.ListenAndServeTLS(config.HTTP.ServerCert, config.HTTP.ServerKey))
+	} else {
+		// HTTP
+		go log.Println(http.ListenAndServe(listenString, r))
 	}
 
+	return srv
 }
 
 func getTask(w http.ResponseWriter, r *http.Request, allowOneTime bool) *Task {
