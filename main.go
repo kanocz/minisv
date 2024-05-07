@@ -9,7 +9,6 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
-	"time"
 )
 
 const (
@@ -38,10 +37,9 @@ func main() {
 
 	log.Println("Starting...")
 
-	rand.Seed(time.Now().UnixNano())
 	gelfMsgID = uint64(rand.Int63())
 
-	config := aConfig.Load().(Config)
+	config := aConfig.Load()
 
 	processRLimits(config.Limits)
 

@@ -73,7 +73,7 @@ func (t *Task) Run(input []byte) {
 	t.cSignal = make(chan os.Signal)
 	t.sSignal = make(chan bool)
 
-	config := aConfig.Load().(Config)
+	config := aConfig.Load()
 
 	// for log rotation we need layer in the middle
 	writer := logWithRotation(fmt.Sprintf("%s/%s%s.log",
@@ -180,7 +180,7 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 	t.sSignal = make(chan bool)
 	t.eSignal = make(chan bool)
 
-	config := aConfig.Load().(Config)
+	config := aConfig.Load()
 
 	// for log rotation we need layer in the middle
 	out := logWithRotation(fmt.Sprintf("%s/%s%s.log",

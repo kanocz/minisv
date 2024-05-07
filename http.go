@@ -5,7 +5,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -52,7 +52,7 @@ func httpInit() {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 
-	config := aConfig.Load().(Config)
+	config := aConfig.Load()
 
 	if config.HTTP.User != "" && config.HTTP.Pass != "" {
 		r.Use(basicAuth(config.HTTP.User, config.HTTP.Pass))
@@ -87,7 +87,7 @@ func httpInit() {
 
 		} else {
 
-			clientCert, err := ioutil.ReadFile(config.HTTP.ClientCert)
+			clientCert, err := os.ReadFile(config.HTTP.ClientCert)
 			if nil != err {
 				log.Fatalln("Error loading client cert:", err)
 			}
@@ -112,7 +112,7 @@ func httpInit() {
 func getTask(w http.ResponseWriter, r *http.Request, allowOneTime bool) *Task {
 	name := chi.URLParam(r, "id")
 
-	config := aConfig.Load().(Config)
+	config := aConfig.Load()
 
 	task, ok := config.Tasks[name]
 
@@ -139,7 +139,7 @@ type httpAllStatusItem struct {
 }
 
 func httpAllStatus(w http.ResponseWriter, r *http.Request) {
-	config := aConfig.Load().(Config)
+	config := aConfig.Load()
 	result := map[string]httpAllStatusItem{}
 
 	for name, task := range config.Tasks {
@@ -201,7 +201,7 @@ func httpRunTaskWithInput(w http.ResponseWriter, r *http.Request) {
 	}
 
 	defer r.Body.Close()
-	body, err := ioutil.ReadAll(r.Body)
+	body, err := io.ReadAll(r.Body)
 	if nil != err {
 		_, _ = w.Write([]byte("body read error: " + err.Error()))
 		return
@@ -282,7 +282,7 @@ func httpDeleteTask(w http.ResponseWriter, r *http.Request) {
 	configChangeLock.Lock()
 	defer configChangeLock.Unlock()
 
-	config := aConfig.Load().(Config)
+	config := aConfig.Load()
 	name := chi.URLParam(r, "id")
 	task, ok := config.Tasks[name]
 
@@ -313,7 +313,7 @@ func httpCreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := ioutil.ReadAll(r.Body)
+	body, err := io.ReadAll(r.Body)
 	r.Body.Close()
 
 	if nil != err {
@@ -340,7 +340,7 @@ func httpCreateTask(w http.ResponseWriter, r *http.Request) {
 	configChangeLock.Lock()
 	defer configChangeLock.Unlock()
 
-	config := aConfig.Load().(Config)
+	config := aConfig.Load()
 	_, ok := config.Tasks[name]
 
 	if ok {

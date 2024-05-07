@@ -3,9 +3,9 @@ package main
 import (
 	"encoding/json"
 	"flag"
-	"io/ioutil"
 	"log"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -53,7 +53,7 @@ type Config struct {
 }
 
 var (
-	aConfig          atomic.Value
+	aConfig          atomic.Pointer[Config]
 	configChangeLock sync.Mutex
 )
 
@@ -63,7 +63,7 @@ var (
 )
 
 func readConfig() bool {
-	data, err := ioutil.ReadFile(*configfile)
+	data, err := os.ReadFile(*configfile)
 	if nil != err {
 		log.Println("Error reading config file: ", err)
 		return false
@@ -94,7 +94,7 @@ func readConfig() bool {
 
 	}
 
-	aConfig.Store(config)
+	aConfig.Store(&config)
 
 	return true
 }
@@ -107,13 +107,13 @@ func saveConfig() {
 	saveMutex.Lock()
 	defer saveMutex.Unlock()
 
-	data, err := json.MarshalIndent(aConfig.Load().(Config), "", "  ")
+	data, err := json.MarshalIndent(aConfig.Load(), "", "  ")
 	if nil != err {
 		log.Println("Error json encoding config for save:", err)
 		return
 	}
 
-	err = ioutil.WriteFile(*configfile, data, 0644)
+	err = os.WriteFile(*configfile, data, 0644)
 	if nil != err {
 		log.Println("Error on config save:", err)
 		return

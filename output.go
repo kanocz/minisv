@@ -177,7 +177,7 @@ func logWithRotation(filename string, timeSuffixFormat string, rotate chan bool,
 }
 
 func rotateLogs() {
-	config := aConfig.Load().(Config)
+	config := aConfig.Load()
 
 	for name := range config.Tasks {
 		if !config.Tasks[name].OneTime {
@@ -198,7 +198,7 @@ func rotateOnHUP() {
 }
 
 func rotateEveryPeriod() {
-	config := aConfig.Load().(Config)
+	config := aConfig.Load()
 
 	if nil == config.LogReopen {
 		return
