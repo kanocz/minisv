@@ -3,11 +3,11 @@
 <div id="taskList" class="row row-cols-1 g-4">
     {{range $name, $task := .Tasks}}
     <div class="col task-item" id="task-{{$name}}">
-        <div class="card task-card {{if eq $task.Status.Status "running"}}running{{else}}stopped{{end}}">
+        <div class="card task-card {{if or (eq $task.Status.Status "running") (eq $task.Status.Status "started") (eq $task.Status.Status "restart validation") (eq $task.Status.Status "restart ok")}}running{{else}}stopped{{end}}">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <h5 class="card-title mb-0">{{$name}}</h5>
-                <span class="badge {{if eq $task.Status.Status "running"}}bg-success{{else}}bg-danger{{end}}">
-                    {{if eq $task.Status.Status "running"}}Running{{else}}Stopped{{end}}
+                <span class="badge {{if or (eq $task.Status.Status "running") (eq $task.Status.Status "started") (eq $task.Status.Status "restart validation") (eq $task.Status.Status "restart ok")}}bg-success{{else}}bg-danger{{end}}">
+                    {{if or (eq $task.Status.Status "running") (eq $task.Status.Status "started") (eq $task.Status.Status "restart validation") (eq $task.Status.Status "restart ok")}}Running{{else}}Stopped{{end}}
                 </span>
             </div>
             <div class="card-body">
@@ -32,7 +32,7 @@
                 </div>
                 {{end}}
                 <div class="d-flex flex-wrap gap-2">
-                    {{if ne $task.Status.Status "running"}}
+                    {{if not (or (eq $task.Status.Status "running") (eq $task.Status.Status "started") (eq $task.Status.Status "restart validation") (eq $task.Status.Status "restart ok"))}}
                     <button class="btn btn-sm btn-success"
                         hx-get="/{{$name}}/run"
                         hx-swap="none"
@@ -51,7 +51,7 @@
                         hx-get="/{{$name}}/restart"
                         hx-swap="none"
                         hx-on::after-request="htmx.ajax('GET', '/ui/tasks', {target: '#taskList', swap: 'innerHTML'}); showToast('Task restarted');"
-                        {{if or $task.OneTime (ne $task.Status.Status "running")}}disabled{{end}}>
+                        {{if or $task.OneTime (not (or (eq $task.Status.Status "running") (eq $task.Status.Status "started") (eq $task.Status.Status "restart validation") (eq $task.Status.Status "restart ok")))}}disabled{{end}}>
                         Restart
                     </button>
                     <button class="btn btn-sm btn-secondary"
@@ -60,6 +60,10 @@
                         hx-on::after-request="showToast('Logs rotated');"
                         {{if $task.OneTime}}disabled{{end}}>
                         Rotate Logs
+                    </button>
+                    <button class="btn btn-sm btn-info"
+                        onclick="viewTaskLogs('{{$name}}')">
+                        View Logs
                     </button>
                     <button class="btn btn-sm btn-danger"
                         hx-delete="/{{$name}}"

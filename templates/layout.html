@@ -23,6 +23,11 @@
         }
         .task-card.stopped {
             border-left: 4px solid #dc3545;
+            border: 1px solid #dc3545;
+            box-shadow: 0 0 8px rgba(220, 53, 69, 0.3);
+        }
+        .task-card.stopped .card-header {
+            border-bottom: 1px solid rgba(220, 53, 69, 0.5);
         }
         .toast-container {
             position: fixed;
@@ -140,6 +145,14 @@
         }
         [data-bs-theme="dark"] .task-card.stopped {
             border-left: 4px solid #e35d6a;
+            border: 1px solid #e35d6a;
+            box-shadow: 0 0 8px rgba(227, 93, 106, 0.4);
+        }
+        [data-bs-theme="dark"] .task-card.stopped .card-header {
+            border-bottom: 1px solid rgba(227, 93, 106, 0.4);
+        }
+        [data-bs-theme="dark"] .task-card.stopped .bg-light {
+            background-color: rgba(33, 37, 41, 0.8) !important;
         }
     </style>
 </head>
@@ -200,10 +213,6 @@
         <main>
             {{template "content" .}}
         </main>
-
-        <footer class="pt-3 mt-4 text-muted border-top">
-            &copy; 2025 MiniSV
-        </footer>
     </div>
 
     <!-- Create Task Modal -->

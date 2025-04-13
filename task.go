@@ -56,8 +56,18 @@ func (t *Task) GetStatus() TaskStatus {
 	if started, ok := t.timeStarted.Load().(time.Time); ok {
 		result.Started = started
 	}
+
+	// Only include Finished time if the task is not running
 	if finished, ok := t.timeFinished.Load().(time.Time); ok {
-		result.Finished = finished
+		// Check if the task is in a running state
+		if status, ok := t.status.Load().(string); ok {
+			isRunning := status == "running" || status == "started" || status == "restart validation" || status == "restart ok"
+			if !isRunning {
+				result.Finished = finished
+			}
+		} else {
+			result.Finished = finished
+		}
 	}
 
 	return result
