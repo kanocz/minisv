@@ -33,15 +33,16 @@ type grayLogConfig struct {
 
 // Config represents not only configuration but also current running state
 type Config struct {
-	LogDir        string           `json:"logdir"`
-	LogPrefix     string           `json:"logfileprefix"`
-	LogSuffixDate string           `json:"logsuffixdate"`
-	LogDate       string           `json:"logdate"`
-	LogReopen     *configDuration  `json:"logreopen"`
-	GrayLog       grayLogConfig    `json:"graylog"`
-	Tasks         map[string]*Task `json:"tasks"`
-	Limits        []configRLimit   `json:"limits"`
-	HTTP          struct {
+	LogDir         string           `json:"logdir"`
+	LogPrefix      string           `json:"logfileprefix"`
+	LogSuffixDate  string           `json:"logsuffixdate"`
+	LogDate        string           `json:"logdate"`
+	LogReopen      *configDuration  `json:"logreopen"`
+	LogBufferLines int              `json:"logbufferlines"` // Number of log lines to keep in memory buffer
+	GrayLog        grayLogConfig    `json:"graylog"`
+	Tasks          map[string]*Task `json:"tasks"`
+	Limits         []configRLimit   `json:"limits"`
+	HTTP           struct {
 		Addr       string `json:"address"`
 		Port       int    `json:"port"`
 		ServerCert string `json:"servercert"`
@@ -79,6 +80,11 @@ func readConfig() bool {
 
 	for name, task := range config.Tasks {
 		task.name = name
+	}
+
+	// Set default value for LogBufferLines if not specified
+	if config.LogBufferLines <= 0 {
+		config.LogBufferLines = 10 // Default to 10 lines if not specified
 	}
 
 	if config.GrayLog.Remote != "" {

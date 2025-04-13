@@ -34,6 +34,8 @@ type Task struct {
 	fSignal        chan bool      // log flush signal
 	sSignal        chan bool      // signal to stop task
 	eSignal        chan bool      // exit loop, trigered on task delete
+	logBuffer      []string       // buffer for last 10 log lines
+	logBufferMutex sync.RWMutex   // mutex for log buffer operations
 }
 
 // TaskStatus is simple struct suitable for marshaling
@@ -79,7 +81,7 @@ func (t *Task) Run(input []byte) {
 	writer := logWithRotation(fmt.Sprintf("%s/%s%s.log",
 		config.LogDir, config.LogPrefix, t.name),
 		config.LogSuffixDate, t.fSignal, config.LogDate,
-		t.name, config.GrayLog)
+		t.name, config.GrayLog, t)
 	defer func() {
 		err := writer.Close()
 		if nil != err {
@@ -186,7 +188,7 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 	out := logWithRotation(fmt.Sprintf("%s/%s%s.log",
 		config.LogDir, config.LogPrefix, t.name),
 		config.LogSuffixDate, t.fSignal, config.LogDate,
-		t.name, config.GrayLog)
+		t.name, config.GrayLog, t)
 	defer func() {
 		err := out.Close()
 		if nil != err {

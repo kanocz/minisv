@@ -58,6 +58,10 @@
                     {{if $task.OneTime}}disabled{{end}}>
                     Rotate Logs
                 </button>
+                <button class="btn btn-sm btn-info"
+                    onclick="viewTaskLogs('{{$name}}')">
+                    View Logs
+                </button>
                 <button class="btn btn-sm btn-danger"
                     hx-delete="/{{$name}}"
                     hx-swap="none"

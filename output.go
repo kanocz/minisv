@@ -117,7 +117,7 @@ func sendGrayLogUDPMessage(message string, serviceName string, graylog grayLogCo
 }
 
 func logWithRotation(filename string, timeSuffixFormat string, rotate chan bool,
-	timeFormat string, serviceName string, graylog grayLogConfig) io.WriteCloser {
+	timeFormat string, serviceName string, graylog grayLogConfig, task *Task) io.WriteCloser {
 
 	reader, writer := io.Pipe()
 
@@ -137,6 +137,10 @@ func logWithRotation(filename string, timeSuffixFormat string, rotate chan bool,
 			}
 		}
 	}()
+
+	// Get the configured buffer size
+	config := aConfig.Load()
+	bufferSize := config.LogBufferLines
 
 	go func() {
 		out := openOrStdout(filename, timeSuffixFormat)
@@ -158,6 +162,19 @@ func logWithRotation(filename string, timeSuffixFormat string, rotate chan bool,
 					}
 					return
 				}
+
+				// Store line in task's log buffer if task exists
+				if task != nil {
+					task.logBufferMutex.Lock()
+					if len(task.logBuffer) >= bufferSize {
+						// Remove oldest line if buffer is full
+						task.logBuffer = task.logBuffer[1:]
+					}
+					// Add new line to buffer
+					task.logBuffer = append(task.logBuffer, str)
+					task.logBufferMutex.Unlock()
+				}
+
 				var err error
 				if timeFormat != "" {
 					_, err = out.WriteString(

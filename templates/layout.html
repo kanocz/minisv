@@ -30,6 +30,33 @@
             right: 1rem;
             z-index: 1050;
         }
+        /* Log styling */
+        .minisv-log-line {
+            color: #0d6efd;
+            padding: 1px 0;
+            font-weight: 500;
+            display: flex;
+            align-items: baseline;
+        }
+        .minisv-log-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background-color: #0d6efd;
+            color: white;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            padding: 0 4px;
+            margin-right: 6px;
+            height: 1.5em;
+            line-height: 1;
+        }
+        [data-bs-theme="dark"] .minisv-log-line {
+            color: #6ea8fe;
+        }
+        [data-bs-theme="dark"] .minisv-log-badge {
+            background-color: #0d6efd;
+        }
         /* Loading overlay styles */
         #page-loading-overlay {
             position: fixed;
@@ -228,6 +255,33 @@
         </div>
     </div>
 
+    <!-- Log Buffer Modal -->
+    <div class="modal fade" id="logBufferModal" tabindex="-1" aria-labelledby="logBufferModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="logBufferModalLabel">Task Log Buffer</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="d-flex justify-content-between mb-2">
+                        <h6 id="logBufferTaskName"></h6>
+                        <button type="button" class="btn btn-sm btn-primary" onclick="refreshLogBuffer()">
+                            <i class="bi bi-arrow-clockwise"></i> Refresh
+                        </button>
+                    </div>
+                    <div class="alert alert-info small mb-2">
+                        Showing last log lines from memory buffer
+                    </div>
+                    <pre id="logBufferContent" class="p-3 bg-light border rounded" style="max-height: 400px; overflow-y: auto; font-size: 0.85rem;"></pre>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         // Theme management
@@ -349,6 +403,110 @@
             });
         }
 
+        // Log buffer functions
+        let currentTaskName = '';
+        let logBufferModal;
+        let configuredBufferSize = 10; // Default value, will be updated from server
+
+        // Fetch configuration info from the server
+        function fetchConfigInfo() {
+            fetch('/api/config')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Failed to fetch config info');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data && data.logBufferLines) {
+                        configuredBufferSize = data.logBufferLines;
+                        // Update the buffer size display in the modal if it exists
+                        const logBufferSizeEl = document.getElementById('logBufferSize');
+                        if (logBufferSizeEl) {
+                            logBufferSizeEl.textContent = configuredBufferSize;
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching config:', error);
+                });
+        }
+
+        function viewTaskLogs(taskName) {
+            currentTaskName = taskName;
+            const taskNameElement = document.getElementById('logBufferTaskName');
+            if (taskNameElement) {
+                taskNameElement.textContent = 'Task: ' + taskName;
+            }
+            
+            if (!logBufferModal) {
+                logBufferModal = new bootstrap.Modal(document.getElementById('logBufferModal'));
+            }
+            
+            // Update the buffer size display with null check
+            const logBufferSizeElement = document.getElementById('logBufferSize');
+            if (logBufferSizeElement) {
+                logBufferSizeElement.textContent = configuredBufferSize;
+            }
+            
+            refreshLogBuffer();
+            logBufferModal.show();
+        }
+
+        function refreshLogBuffer() {
+            if (!currentTaskName) return;
+            
+            const logContent = document.getElementById('logBufferContent');
+            logContent.innerHTML = '<div class="text-center"><div class="spinner-border spinner-border-sm" role="status"></div> Loading logs...</div>';
+            
+            fetch('/' + currentTaskName + '/logs')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Failed to fetch logs');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.length === 0) {
+                        logContent.textContent = 'No logs available';
+                    } else {
+                        // Clear previous content
+                        logContent.innerHTML = '';
+                        
+                        // Process each log line
+                        data.forEach(line => {
+                            if (line.startsWith('[minisv]')) {
+                                // Create a special element for minisv log lines
+                                const lineElement = document.createElement('div');
+                                lineElement.className = 'minisv-log-line';
+                                
+                                // Create the badge to replace [minisv]
+                                const badge = document.createElement('span');
+                                badge.className = 'minisv-log-badge';
+                                badge.innerHTML = '<i class="bi bi-gear-fill"></i>';
+                                badge.title = 'MiniSV System';
+                                
+                                // Get the content after [minisv] and add it to the line
+                                const content = document.createTextNode(line.substring(8));
+                                
+                                lineElement.appendChild(badge);
+                                lineElement.appendChild(content);
+                                logContent.appendChild(lineElement);
+                            } else {
+                                // Regular log line
+                                const lineElement = document.createElement('div');
+                                lineElement.textContent = line;
+                                logContent.appendChild(lineElement);
+                            }
+                        });
+                    }
+                })
+                .catch(error => {
+                    logContent.textContent = 'Error loading logs: ' + error.message;
+                    console.error('Error:', error);
+                });
+        }
+
         // Helper to show notifications
         function showToast(message, type = 'success') {
             const toastContainer = document.querySelector('.toast-container');
@@ -430,6 +588,19 @@
             
             // Setup theme toggle button
             document.getElementById('theme-toggle').addEventListener('click', toggleTheme);
+
+            // Add event listener to properly manage focus when the log buffer modal is closed
+            document.getElementById('logBufferModal').addEventListener('hide.bs.modal', function() {
+                // Move focus to a safe element outside the modal before it gets hidden
+                document.getElementById('theme-toggle').focus();
+                // Reset focus after a slight delay to ensure it doesn't get trapped
+                setTimeout(() => {
+                    document.activeElement.blur();
+                }, 100);
+            });
+
+            // Fetch configuration info on page load
+            fetchConfigInfo();
         });
     </script>
 </body>

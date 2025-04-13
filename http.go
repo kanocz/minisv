@@ -114,6 +114,7 @@ func httpStart() *http.Server {
 	// API routes
 	r.Route("/api", func(r chi.Router) {
 		r.Get("/", httpAllStatusAPI)
+		r.Get("/config", httpGetConfigInfo)
 		r.Route("/{id}", func(r chi.Router) {
 			r.Post("/", httpCreateTask)
 			r.Delete("/", httpDeleteTask)
@@ -126,6 +127,7 @@ func httpStart() *http.Server {
 			r.Get("/kill", httpSignalTask(syscall.SIGKILL))
 			r.Get("/rotate", httpLogRotateTask)
 			r.Get("/status", httpStatusOfTast)
+			r.Get("/logs", httpGetTaskLogBuffer)
 		})
 	})
 
@@ -147,6 +149,7 @@ func httpStart() *http.Server {
 		r.Get("/kill", httpSignalTask(syscall.SIGKILL))
 		r.Get("/rotate", httpLogRotateTask)
 		r.Get("/status", httpStatusOfTast)
+		r.Get("/logs", httpGetTaskLogBuffer) // Added new endpoint
 	})
 
 	listenString := fmt.Sprintf("%s:%d", config.HTTP.Addr, config.HTTP.Port)
@@ -532,4 +535,28 @@ func httpUITaskList(tmpl *template.Template) http.HandlerFunc {
 			log.Printf("Template error: %v", err)
 		}
 	}
+}
+
+// Add new API endpoint to get log buffer
+func httpGetTaskLogBuffer(w http.ResponseWriter, r *http.Request) {
+	task := getTask(w, r, true)
+	if task == nil {
+		return
+	}
+
+	task.logBufferMutex.RLock()
+	logBuffer := make([]string, len(task.logBuffer))
+	copy(logBuffer, task.logBuffer)
+	task.logBufferMutex.RUnlock()
+
+	render.JSON(w, r, logBuffer)
+}
+
+// Add new API endpoint to get config info
+func httpGetConfigInfo(w http.ResponseWriter, r *http.Request) {
+	config := aConfig.Load()
+	configInfo := map[string]interface{}{
+		"logBufferLines": config.LogBufferLines,
+	}
+	render.JSON(w, r, configInfo)
 }
