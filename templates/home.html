@@ -1,0 +1,83 @@
+{{define "content"}}
+
+<div id="taskList" class="row row-cols-1 g-4">
+    {{range $name, $task := .Tasks}}
+    <div class="col task-item" id="task-{{$name}}">
+        <div class="card task-card {{if eq $task.Status.Status "running"}}running{{else}}stopped{{end}}">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">{{$name}}</h5>
+                <span class="badge {{if eq $task.Status.Status "running"}}bg-success{{else}}bg-danger{{end}}">
+                    {{if eq $task.Status.Status "running"}}Running{{else}}Stopped{{end}}
+                </span>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <strong>Command:</strong> {{$task.Command}} {{range $arg := $task.Args}} {{$arg}}{{end}}
+                </div>
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <strong>Status:</strong> {{$task.Status.Status}}
+                    </div>
+                    <div class="col-md-6">
+                        <strong>Type:</strong> {{if eq $task.OneTime true}}One-time{{else}}Persistent{{end}}
+                    </div>
+                </div>
+                {{if $task.Status.Finished.IsZero}}
+                <div class="mb-3">
+                    <strong>Started:</strong> {{$task.Status.Started.Format "2006-01-02 15:04:05"}}
+                </div>
+                {{else}}
+                <div class="mb-3">
+                    <strong>Finished:</strong> {{$task.Status.Finished.Format "2006-01-02 15:04:05"}}
+                </div>
+                {{end}}
+                <div class="d-flex flex-wrap gap-2">
+                    {{if ne $task.Status.Status "running"}}
+                    <button class="btn btn-sm btn-success"
+                        hx-get="/{{$name}}/run"
+                        hx-swap="none"
+                        hx-on::after-request="htmx.ajax('GET', '/ui/tasks', {target: '#taskList', swap: 'innerHTML'}); showToast('Task started');">
+                        Start
+                    </button>
+                    {{else}}
+                    <button class="btn btn-sm btn-danger"
+                        hx-get="/{{$name}}/stop"
+                        hx-swap="none"
+                        hx-on::after-request="htmx.ajax('GET', '/ui/tasks', {target: '#taskList', swap: 'innerHTML'}); showToast('Task stopped');">
+                        Stop
+                    </button>
+                    {{end}}
+                    <button class="btn btn-sm btn-warning"
+                        hx-get="/{{$name}}/restart"
+                        hx-swap="none"
+                        hx-on::after-request="htmx.ajax('GET', '/ui/tasks', {target: '#taskList', swap: 'innerHTML'}); showToast('Task restarted');"
+                        {{if or $task.OneTime (ne $task.Status.Status "running")}}disabled{{end}}>
+                        Restart
+                    </button>
+                    <button class="btn btn-sm btn-secondary"
+                        hx-get="/{{$name}}/rotate"
+                        hx-swap="none"
+                        hx-on::after-request="showToast('Logs rotated');"
+                        {{if $task.OneTime}}disabled{{end}}>
+                        Rotate Logs
+                    </button>
+                    <button class="btn btn-sm btn-danger"
+                        hx-delete="/{{$name}}"
+                        hx-swap="none"
+                        hx-confirm="Are you sure you want to delete this task?"
+                        hx-on::after-request="htmx.ajax('GET', '/ui/tasks', {target: '#taskList', swap: 'innerHTML'}); showToast('Task deleted');">
+                        Delete
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    {{else}}
+    <div class="col">
+        <div class="alert alert-warning">
+            No tasks found. Click the "Add New Task" button to create one.
+        </div>
+    </div>
+    {{end}}
+</div>
+{{end}}

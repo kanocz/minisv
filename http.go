@@ -4,9 +4,12 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"embed"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -19,6 +22,17 @@ import (
 	"github.com/go-chi/render"
 	"golang.org/x/crypto/bcrypt"
 )
+
+//go:embed templates/*
+var templatesFS embed.FS
+
+// UITaskData represents the task data used in UI templates
+type UITaskData struct {
+	Command string
+	Args    []string
+	OneTime bool
+	Status  TaskStatus
+}
 
 func _requestBasicAuth(w http.ResponseWriter) {
 	w.Header().Add("WWW-Authenticate", `Basic realm="minisv"`)
@@ -74,7 +88,53 @@ func httpStart() *http.Server {
 		r.Use(basicAuth(config.HTTP.User, config.HTTP.Pass))
 	}
 
-	r.Get("/", httpAllStatus)
+	// Load HTML templates
+	templates := loadTemplates()
+
+	// Create a sub-filesystem for templates to serve static files
+	staticFS, err := fs.Sub(templatesFS, "templates")
+	if err != nil {
+		log.Printf("Error creating sub-filesystem for static files: %v", err)
+	} else {
+		// Serve favicon.svg and other static files from the templates directory
+		r.Get("/favicon.svg", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "image/svg+xml")
+			file, err := staticFS.Open("favicon.svg")
+			if err != nil {
+				http.Error(w, "Favicon not found", http.StatusNotFound)
+				return
+			}
+			defer file.Close()
+			io.Copy(w, file)
+		})
+
+		// Could add other static files handlers here if needed in the future
+	}
+
+	// API routes
+	r.Route("/api", func(r chi.Router) {
+		r.Get("/", httpAllStatusAPI)
+		r.Route("/{id}", func(r chi.Router) {
+			r.Post("/", httpCreateTask)
+			r.Delete("/", httpDeleteTask)
+			r.Get("/restart", httpRestartTask)
+			r.Get("/run", httpRunTask)
+			r.Post("/run", httpRunTaskWithInput)
+			r.Get("/stop", httpStopTask)
+			r.Get("/term", httpSignalTask(syscall.SIGTERM))
+			r.Get("/hup", httpSignalTask(syscall.SIGHUP))
+			r.Get("/kill", httpSignalTask(syscall.SIGKILL))
+			r.Get("/rotate", httpLogRotateTask)
+			r.Get("/status", httpStatusOfTast)
+		})
+	})
+
+	// UI routes
+	r.Get("/", httpUIHome(templates))
+	r.Get("/ui/tasks", httpUITaskList(templates))
+
+	// Keep original API routes for backward compatibility
+	r.Get("/status", httpAllStatusAPI)
 	r.Route("/{id}", func(r chi.Router) {
 		r.Post("/", httpCreateTask)
 		r.Delete("/", httpDeleteTask)
@@ -150,7 +210,7 @@ type httpAllStatusItem struct {
 	Status  TaskStatus `json:"status"`
 }
 
-func httpAllStatus(w http.ResponseWriter, r *http.Request) {
+func httpAllStatusAPI(w http.ResponseWriter, r *http.Request) {
 	config := aConfig.Load()
 	result := map[string]httpAllStatusItem{}
 
@@ -379,4 +439,97 @@ func httpCreateTask(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(time.Second)
 	}
 	render.JSON(w, r, task.GetStatus())
+}
+
+// Template functions for the UI
+func loadTemplates() *template.Template {
+	// Create a new template with functions if needed
+	// P.S.: just for future to avoid looking for documentation later :)
+	tmpl := template.New("").Funcs(template.FuncMap{
+		// Add any custom template functions here
+	})
+
+	// Parse templates from embedded filesystem
+	templatesSubFS, err := fs.Sub(templatesFS, "templates")
+	if err != nil {
+		// it's strange, but we need to keep all services running
+		// even if templates are not loaded and UI is not available
+		log.Printf("Error creating sub-filesystem for templates: %v", err)
+		return template.New("")
+	}
+
+	tmpl, err = tmpl.ParseFS(templatesSubFS, "*.html")
+	if err != nil {
+		// Same as above, we need to keep all services running
+		log.Printf("Error loading embedded templates: %v", err)
+		return template.New("")
+	}
+
+	return tmpl
+}
+
+// Add UI handler for home page
+func httpUIHome(tmpl *template.Template) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		config := aConfig.Load()
+
+		// Get hostname
+		hostname, err := os.Hostname()
+		if err != nil {
+			hostname = "Unknown"
+		}
+
+		// Prepare data for the template
+		data := struct {
+			Tasks    map[string]UITaskData
+			Hostname string
+		}{
+			Tasks:    make(map[string]UITaskData),
+			Hostname: hostname,
+		}
+
+		for name, task := range config.Tasks {
+			data.Tasks[name] = UITaskData{
+				Command: task.Command,
+				Args:    task.Args,
+				OneTime: task.OneTime,
+				Status:  task.GetStatus(),
+			}
+		}
+
+		// Render the home template
+		if err := tmpl.ExecuteTemplate(w, "layout.html", data); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			log.Printf("Template error: %v", err)
+		}
+	}
+}
+
+// Add UI handler for task list (used for HTMX partial updates)
+func httpUITaskList(tmpl *template.Template) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		config := aConfig.Load()
+
+		// Prepare data for the template
+		data := struct {
+			Tasks map[string]UITaskData
+		}{
+			Tasks: make(map[string]UITaskData),
+		}
+
+		for name, task := range config.Tasks {
+			data.Tasks[name] = UITaskData{
+				Command: task.Command,
+				Args:    task.Args,
+				OneTime: task.OneTime,
+				Status:  task.GetStatus(),
+			}
+		}
+
+		// Render just the tasks template (not the full layout)
+		if err := tmpl.ExecuteTemplate(w, "tasks.html", data); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			log.Printf("Template error: %v", err)
+		}
+	}
 }
