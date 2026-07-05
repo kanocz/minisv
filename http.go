@@ -248,13 +248,36 @@ func httpRestartTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task.rSignal <- true
-	_, _ = w.Write([]byte("ok"))
+	// Loop creates the channel on start, so it may be nil for a moment
+	// right after task creation
+	if nil == task.rSignal {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte("task is not ready yet, try again"))
+		return
+	}
+
+	// Loop may be busy (restart pause, waiting for a child to terminate)
+	// or already gone (task deleted) — don't hang the handler forever
+	select {
+	case task.rSignal <- true:
+		_, _ = w.Write([]byte("ok"))
+	case <-time.After(3 * time.Second):
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte("task is busy, try again later"))
+	}
 }
 
 func httpRunTask(w http.ResponseWriter, r *http.Request) {
 	task := getTask(w, r, true)
 	if nil == task {
+		return
+	}
+
+	// Run() would clash with the Loop of a persistent task
+	// (reassigns signal channels, spawns an unsupervised instance)
+	if !task.OneTime {
+		w.WriteHeader(http.StatusNotAcceptable)
+		_, _ = w.Write([]byte("not a one-time task, use /restart to start it"))
 		return
 	}
 
@@ -292,6 +315,12 @@ func httpRunTaskWithInput(w http.ResponseWriter, r *http.Request) {
 
 	task := getTask(w, r, true)
 	if nil == task {
+		return
+	}
+
+	if !task.OneTime {
+		w.WriteHeader(http.StatusNotAcceptable)
+		_, _ = w.Write([]byte("not a one-time task, use /restart to start it"))
 		return
 	}
 
@@ -374,16 +403,19 @@ func httpDeleteTask(w http.ResponseWriter, r *http.Request) {
 		close(task.eSignal)
 	}
 
-	newTasks := make(map[string]*Task, len(config.Tasks)+1)
+	newTasks := make(map[string]*Task, len(config.Tasks))
 	for tname, task := range config.Tasks {
 		if tname != name {
 			newTasks[tname] = task
 		}
 	}
 
-	config.Tasks = newTasks
+	// copy the Config itself too: mutating the stored one would race
+	// with readers holding the pointer from aConfig.Load()
+	newConfig := *config
+	newConfig.Tasks = newTasks
 
-	aConfig.Store(config)
+	aConfig.Store(&newConfig)
 	go saveConfig()
 
 	_, _ = w.Write([]byte("ok"))
@@ -437,8 +469,11 @@ func httpCreateTask(w http.ResponseWriter, r *http.Request) {
 	task.name = name
 	newTasks[name] = &task
 
-	config.Tasks = newTasks
-	aConfig.Store(config)
+	// copy the Config itself too: mutating the stored one would race
+	// with readers holding the pointer from aConfig.Load()
+	newConfig := *config
+	newConfig.Tasks = newTasks
+	aConfig.Store(&newConfig)
 
 	go saveConfig()
 

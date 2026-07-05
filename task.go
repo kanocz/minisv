@@ -129,7 +129,9 @@ func (t *Task) Run(input []byte) {
 		cmdDone <- cmd.Wait()
 	}()
 
-	killIt := make(chan bool)
+	// buffered: the sender goroutine must not block forever
+	// when the process exits before the kill timeout fires
+	killIt := make(chan bool, 1)
 	killCanceled := false
 
 itsDone:
@@ -263,6 +265,14 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 
 			if stage {
 
+				// exit status of a process terminated by stop may arrive
+				// late (cmd.Wait also waits for stdout/stderr EOF) —
+				// don't overwrite the "stoped" status then
+				if t.stopped {
+					fmt.Fprintln(out, "[minisv] Process exited after stop")
+					continue
+				}
+
 				t.timeFinished.Store(time.Now())
 
 				if nil == err {
@@ -299,6 +309,12 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 				continue
 
 			} else {
+
+				// see the done1 case above
+				if t.stopped {
+					fmt.Fprintln(out, "[minisv] Process exited after stop")
+					continue
+				}
 
 				t.timeFinished.Store(time.Now())
 

@@ -49,6 +49,8 @@ func termChild(running bool, cmd *exec.Cmd, ch chan error,
 				log.Println("Error writing log: ", err)
 			}
 		}
+		// don't wait on ch here: cmd.Wait() also waits for stdout/stderr
+		// EOF, which an orphaned grandchild may hold open for a long time
 	}
 
 }

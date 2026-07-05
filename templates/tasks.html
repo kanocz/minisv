@@ -31,7 +31,7 @@
             <div class="d-flex flex-wrap gap-2">
                 {{if not (or (eq $task.Status.Status "running") (eq $task.Status.Status "started") (eq $task.Status.Status "restart validation") (eq $task.Status.Status "restart ok"))}}
                 <button class="btn btn-sm btn-success"
-                    hx-get="/{{$name}}/run"
+                    hx-get="/{{$name}}/{{if $task.OneTime}}run{{else}}restart{{end}}"
                     hx-swap="none"
                     hx-on::after-request="htmx.ajax('GET', '/ui/tasks', {target: '#taskList', swap: 'innerHTML'}); showToast('Task started');">
                     Start
