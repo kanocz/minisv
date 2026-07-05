@@ -15,12 +15,10 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
-	"github.com/go-chi/chi"
-	"github.com/go-chi/chi/middleware"
-	"github.com/go-chi/render"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -33,6 +31,46 @@ type UITaskData struct {
 	Args    []string
 	OneTime bool
 	Status  TaskStatus
+}
+
+// statusWriter remembers the response code for request logging
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusWriter) WriteHeader(code int) {
+	w.status = code
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func logRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+		start := time.Now()
+		next.ServeHTTP(sw, r)
+		log.Printf("\"%s %s\" from %s - %d in %s",
+			r.Method, r.URL.Path, r.RemoteAddr, sw.status, time.Since(start))
+	})
+}
+
+func recoverPanics(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if p := recover(); nil != p {
+				log.Printf("panic serving %s %s: %v", r.Method, r.URL.Path, p)
+				w.WriteHeader(http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
+func writeJSON(w http.ResponseWriter, v interface{}) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if err := json.NewEncoder(w).Encode(v); nil != err {
+		log.Println("Error encoding json response:", err)
+	}
 }
 
 func _requestBasicAuth(w http.ResponseWriter) {
@@ -79,15 +117,12 @@ func httpInit() {
 }
 
 func httpStart() *http.Server {
-	r := chi.NewRouter()
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
+	mux := http.NewServeMux()
 
 	config := aConfig.Load()
 
-	if config.HTTP.User != "" && config.HTTP.Pass != "" {
-		r.Use(basicAuth(config.HTTP.User, config.HTTP.Pass))
-	} else {
+	authEnabled := config.HTTP.User != "" && config.HTTP.Pass != ""
+	if !authEnabled {
 		// the API allows to run arbitrary commands, so listening on
 		// a non-loopback address without auth is almost surely a mistake
 		// (empty Addr means listening on all interfaces)
@@ -109,7 +144,7 @@ func httpStart() *http.Server {
 		log.Printf("Error creating sub-filesystem for static files: %v", err)
 	} else {
 		// Serve favicon.svg and other static files from the templates directory
-		r.Get("/favicon.svg", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("GET /favicon.svg", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "image/svg+xml")
 			file, err := staticFS.Open("favicon.svg")
 			if err != nil {
@@ -124,51 +159,52 @@ func httpStart() *http.Server {
 	}
 
 	// API routes
-	r.Route("/api", func(r chi.Router) {
-		r.Get("/", httpAllStatusAPI)
-		r.Get("/config", httpGetConfigInfo)
-		r.Route("/{id}", func(r chi.Router) {
-			r.Post("/", httpCreateTask)
-			r.Delete("/", httpDeleteTask)
-			r.Get("/restart", httpRestartTask)
-			r.Get("/run", httpRunTask)
-			r.Post("/run", httpRunTaskWithInput)
-			r.Get("/stop", httpStopTask)
-			r.Get("/term", httpSignalTask(syscall.SIGTERM))
-			r.Get("/hup", httpSignalTask(syscall.SIGHUP))
-			r.Get("/kill", httpSignalTask(syscall.SIGKILL))
-			r.Get("/rotate", httpLogRotateTask)
-			r.Get("/status", httpStatusOfTast)
-			r.Get("/logs", httpGetTaskLogBuffer)
-		})
-	})
+	mux.HandleFunc("GET /api", httpAllStatusAPI)
+	mux.HandleFunc("GET /api/{$}", httpAllStatusAPI)
+	mux.HandleFunc("GET /api/config", httpGetConfigInfo)
+	mux.HandleFunc("POST /api/{id}", httpCreateTask)
+	mux.HandleFunc("DELETE /api/{id}", httpDeleteTask)
+	mux.HandleFunc("GET /api/{id}/restart", httpRestartTask)
+	mux.HandleFunc("GET /api/{id}/run", httpRunTask)
+	mux.HandleFunc("POST /api/{id}/run", httpRunTaskWithInput)
+	mux.HandleFunc("GET /api/{id}/stop", httpStopTask)
+	mux.HandleFunc("GET /api/{id}/term", httpSignalTask(syscall.SIGTERM))
+	mux.HandleFunc("GET /api/{id}/hup", httpSignalTask(syscall.SIGHUP))
+	mux.HandleFunc("GET /api/{id}/kill", httpSignalTask(syscall.SIGKILL))
+	mux.HandleFunc("GET /api/{id}/rotate", httpLogRotateTask)
+	mux.HandleFunc("GET /api/{id}/status", httpStatusOfTast)
+	mux.HandleFunc("GET /api/{id}/logs", httpGetTaskLogBuffer)
+	mux.HandleFunc("GET /status", httpAllStatusAPI)
 
 	// UI routes
-	r.Get("/", httpUIHome(templates))
-	r.Get("/ui/tasks", httpUITaskList(templates))
+	mux.HandleFunc("GET /{$}", httpUIHome(templates))
+	mux.HandleFunc("GET /ui/tasks", httpUITaskList(templates))
 
-	// Keep original API routes for backward compatibility
-	r.Get("/status", httpAllStatusAPI)
-	r.Route("/{id}", func(r chi.Router) {
-		r.Post("/", httpCreateTask)
-		r.Delete("/", httpDeleteTask)
-		r.Get("/restart", httpRestartTask)
-		r.Get("/run", httpRunTask)
-		r.Post("/run", httpRunTaskWithInput)
-		r.Get("/stop", httpStopTask)
-		r.Get("/term", httpSignalTask(syscall.SIGTERM))
-		r.Get("/hup", httpSignalTask(syscall.SIGHUP))
-		r.Get("/kill", httpSignalTask(syscall.SIGKILL))
-		r.Get("/rotate", httpLogRotateTask)
-		r.Get("/status", httpStatusOfTast)
-		r.Get("/logs", httpGetTaskLogBuffer) // Added new endpoint
+	// the same task API used to live at the root (e.g. /{id}/restart);
+	// registering those patterns directly would conflict with /api ones
+	// in ServeMux, so forward everything unmatched to /api instead
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
+			http.NotFound(w, r)
+			return
+		}
+		r2 := r.Clone(r.Context())
+		r2.URL.Path = "/api" + r.URL.Path
+		mux.ServeHTTP(w, r2)
 	})
+
+	var handler http.Handler = mux
+	if authEnabled {
+		handler = basicAuth(config.HTTP.User, config.HTTP.Pass)(handler)
+	}
+	handler = recoverPanics(handler)
+	handler = logRequests(handler)
 
 	listenString := fmt.Sprintf("%s:%d", config.HTTP.Addr, config.HTTP.Port)
 
 	srv := &http.Server{
 		Addr:    listenString,
-		Handler: r,
+		Handler: handler,
 	}
 
 	if config.HTTP.ServerCert != "" && config.HTTP.ServerKey != "" {
@@ -201,7 +237,7 @@ func httpStart() *http.Server {
 }
 
 func getTask(w http.ResponseWriter, r *http.Request, allowOneTime bool) *Task {
-	name := chi.URLParam(r, "id")
+	name := r.PathValue("id")
 
 	config := aConfig.Load()
 
@@ -242,7 +278,7 @@ func httpAllStatusAPI(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	render.JSON(w, r, result)
+	writeJSON(w, result)
 }
 
 func httpStatusOfTast(w http.ResponseWriter, r *http.Request) {
@@ -251,7 +287,7 @@ func httpStatusOfTast(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	render.JSON(w, r, task.GetStatus())
+	writeJSON(w, task.GetStatus())
 }
 
 func httpRestartTask(w http.ResponseWriter, r *http.Request) {
@@ -408,7 +444,7 @@ func httpDeleteTask(w http.ResponseWriter, r *http.Request) {
 	defer configChangeLock.Unlock()
 
 	config := aConfig.Load()
-	name := chi.URLParam(r, "id")
+	name := r.PathValue("id")
 	task, ok := config.Tasks[name]
 
 	if !ok {
@@ -457,7 +493,7 @@ func httpCreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	name := chi.URLParam(r, "id")
+	name := r.PathValue("id")
 	if name == "" {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte("empty task name"))
@@ -512,7 +548,7 @@ func httpCreateTask(w http.ResponseWriter, r *http.Request) {
 		go task.Loop(needExit, &tasksWg)
 		time.Sleep(time.Second)
 	}
-	render.JSON(w, r, task.GetStatus())
+	writeJSON(w, task.GetStatus())
 }
 
 // Template functions for the UI
@@ -620,7 +656,7 @@ func httpGetTaskLogBuffer(w http.ResponseWriter, r *http.Request) {
 	copy(logBuffer, task.logBuffer)
 	task.logBufferMutex.RUnlock()
 
-	render.JSON(w, r, logBuffer)
+	writeJSON(w, logBuffer)
 }
 
 // Add new API endpoint to get config info
@@ -629,5 +665,5 @@ func httpGetConfigInfo(w http.ResponseWriter, r *http.Request) {
 	configInfo := map[string]interface{}{
 		"logBufferLines": config.LogBufferLines,
 	}
-	render.JSON(w, r, configInfo)
+	writeJSON(w, configInfo)
 }
