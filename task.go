@@ -38,6 +38,17 @@ type Task struct {
 	logBufferMutex sync.RWMutex   // mutex for log buffer operations
 }
 
+// initChannels prepares control channels; must be called once, before
+// Run/Loop start and before the task is visible to http handlers —
+// recreating channels later would race with handlers reading the fields
+func (t *Task) initChannels() {
+	t.cSignal = make(chan os.Signal)
+	t.rSignal = make(chan bool)
+	t.fSignal = make(chan bool)
+	t.sSignal = make(chan bool)
+	t.eSignal = make(chan bool)
+}
+
 // TaskStatus is simple struct suitable for marshaling
 type TaskStatus struct {
 	Status   string    `json:"status"`
@@ -81,9 +92,6 @@ func (t *Task) Run(input []byte) {
 		t.oneTimeRunning = false
 		t.oneTimeMutex.Unlock()
 	}()
-
-	t.cSignal = make(chan os.Signal)
-	t.sSignal = make(chan bool)
 
 	config := aConfig.Load()
 
@@ -187,13 +195,6 @@ itsDone:
 func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	// init channels
-	t.cSignal = make(chan os.Signal)
-	t.rSignal = make(chan bool)
-	t.fSignal = make(chan bool)
-	t.sSignal = make(chan bool)
-	t.eSignal = make(chan bool)
-
 	config := aConfig.Load()
 
 	// for log rotation we need layer in the middle
@@ -229,7 +230,6 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 			t.status.Store("Error starting: " + err.Error())
 			fmt.Fprintf(out, "[minisv] Error starting %s (%s): %v\n",
 				t.name, t.Command, err)
-			time.Sleep(time.Second * time.Duration(t.Pause))
 			return nil, nil, err
 		}
 		t.status.Store(okstatus)
@@ -246,8 +246,21 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 	var done1, done2 chan error
 	var run1, run2 bool
 
+	// pause between start attempts when the command fails to start at all;
+	// at least a second even with no restartPause configured, to avoid
+	// a busy-loop on a permanently broken command
+	retryPause := time.Duration(t.Pause) * time.Second
+	if retryPause < time.Second {
+		retryPause = time.Second
+	}
+
+	// non-nil while waiting before the next start attempt (restart pause
+	// or failed-start retry); a timer in the select instead of time.Sleep
+	// keeps the loop responsive to signals/stop/exit during the pause
+	var startDelay <-chan time.Time
+
 	for {
-		if !t.stopped {
+		if !t.stopped && nil == startDelay {
 			if stage && !run1 {
 				cmd1, done1, err = startNext("started")
 				run1 = nil == err
@@ -256,9 +269,16 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 				cmd2, done2, err = startNext("started")
 				run2 = nil == err
 			}
+			// start failed - retry after a pause instead of waiting forever
+			if (stage && !run1) || (!stage && !run2) {
+				startDelay = time.After(retryPause)
+			}
 		}
 
 		select {
+		case <-startDelay:
+			startDelay = nil
+			continue
 		case err = <-done1:
 
 			run1 = false
@@ -368,6 +388,8 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 		case <-t.rSignal:
 			if t.stopped {
 				t.stopped = false
+				// start immediately, don't wait out a pending pause
+				startDelay = nil
 				fmt.Fprintln(out, "[minisv] Starting task")
 			} else {
 
@@ -439,7 +461,7 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 		if t.Pause != 0 {
 			fmt.Fprintln(out, "Waiting ",
 				time.Second*time.Duration(t.Pause), " before restart")
-			time.Sleep(time.Second * time.Duration(t.Pause))
+			startDelay = time.After(time.Second * time.Duration(t.Pause))
 		}
 	}
 }

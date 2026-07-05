@@ -80,6 +80,7 @@ func readConfig() bool {
 
 	for name, task := range config.Tasks {
 		task.name = name
+		task.initChannels()
 	}
 
 	// Set default value for LogBufferLines if not specified

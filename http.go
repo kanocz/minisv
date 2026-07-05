@@ -398,14 +398,30 @@ func httpStopTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if nil != task.sSignal {
+	if nil == task.sSignal {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte("task is not ready yet, try again"))
+		return
+	}
+
+	if task.OneTime {
+		// one-time task may simply not be running - no receiver then,
+		// so just a best-effort non-blocking send
 		select {
 		case task.sSignal <- true:
 		default:
 		}
+		_, _ = w.Write([]byte("ok"))
+		return
 	}
 
-	_, _ = w.Write([]byte("ok"))
+	select {
+	case task.sSignal <- true:
+		_, _ = w.Write([]byte("ok"))
+	case <-time.After(3 * time.Second):
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte("task is busy, try again later"))
+	}
 }
 
 func httpSignalTask(sig os.Signal) http.HandlerFunc {
@@ -533,6 +549,7 @@ func httpCreateTask(w http.ResponseWriter, r *http.Request) {
 		newTasks[name] = task
 	}
 	task.name = name
+	task.initChannels()
 	newTasks[name] = &task
 
 	// copy the Config itself too: mutating the stored one would race
