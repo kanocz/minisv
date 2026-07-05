@@ -33,7 +33,7 @@ type Task struct {
 	rSignal        chan bool      // restart signal
 	fSignal        chan bool      // log flush signal
 	sSignal        chan bool      // signal to stop task
-	eSignal        chan bool      // exit loop, trigered on task delete
+	eSignal        chan bool      // exit loop, triggered on task delete
 	logBuffer      []string       // buffer for last 10 log lines
 	logBufferMutex sync.RWMutex   // mutex for log buffer operations
 }
@@ -191,7 +191,7 @@ itsDone:
 	t.timeFinished.Store(time.Now())
 }
 
-// Loop task runinng and restarting
+// Loop task running and restarting
 func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 	defer wg.Done()
 
@@ -287,7 +287,7 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 
 				// exit status of a process terminated by stop may arrive
 				// late (cmd.Wait also waits for stdout/stderr EOF) —
-				// don't overwrite the "stoped" status then
+				// don't overwrite the "stopped" status then
 				if t.stopped {
 					fmt.Fprintln(out, "[minisv] Process exited after stop")
 					continue
@@ -381,7 +381,7 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 			}
 
 			t.timeFinished.Store(time.Now())
-			t.status.Store("stoped")
+			t.status.Store("stopped")
 
 			continue
 

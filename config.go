@@ -53,6 +53,16 @@ type Config struct {
 	} `json:"http"`
 }
 
+// logBufferLines returns the number of log lines to keep in memory,
+// applying the default here instead of mutating the parsed config -
+// otherwise saveConfig would bake the default into the config file
+func (c *Config) logBufferLines() int {
+	if c.LogBufferLines <= 0 {
+		return 10
+	}
+	return c.LogBufferLines
+}
+
 var (
 	aConfig          atomic.Pointer[Config]
 	configChangeLock sync.Mutex
@@ -83,10 +93,6 @@ func readConfig() bool {
 		task.initChannels()
 	}
 
-	// Set default value for LogBufferLines if not specified
-	if config.LogBufferLines <= 0 {
-		config.LogBufferLines = 10 // Default to 10 lines if not specified
-	}
 
 	if config.GrayLog.Remote != "" {
 		addr, err := net.ResolveUDPAddr("udp", config.GrayLog.Remote)
@@ -120,9 +126,17 @@ func saveConfig() {
 		return
 	}
 
-	err = os.WriteFile(*configfile, data, 0644)
+	// write to a temporary file and rename: a crash mid-write must not
+	// destroy the old config; 0600 as the file may contain a password hash
+	tmpfile := *configfile + ".tmp"
+	err = os.WriteFile(tmpfile, data, 0600)
 	if nil != err {
 		log.Println("Error on config save:", err)
 		return
+	}
+
+	err = os.Rename(tmpfile, *configfile)
+	if nil != err {
+		log.Println("Error on config save (rename):", err)
 	}
 }

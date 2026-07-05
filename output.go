@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -127,20 +128,25 @@ func logWithRotation(filename string, timeSuffixFormat string, rotate chan bool,
 	go func() {
 		defer close(bufchan)
 
-		var err error
-		var str string
-
-		for nil == err {
-			str, err = bufread.ReadString('\n')
-			if nil == err {
+		for {
+			str, err := bufread.ReadString('\n')
+			// on error (pipe closed) str holds the last incomplete line -
+			// don't lose it, just supply the missing newline
+			if len(str) > 0 {
+				if !strings.HasSuffix(str, "\n") {
+					str += "\n"
+				}
 				bufchan <- str
+			}
+			if nil != err {
+				return
 			}
 		}
 	}()
 
 	// Get the configured buffer size
 	config := aConfig.Load()
-	bufferSize := config.LogBufferLines
+	bufferSize := config.logBufferLines()
 
 	go func() {
 		out := openOrStdout(filename, timeSuffixFormat)
@@ -185,7 +191,10 @@ func logWithRotation(filename string, timeSuffixFormat string, rotate chan bool,
 				if nil != err {
 					log.Println("Error writing to output file: ", err)
 				}
-				sendGrayLogUDPMessage(str, serviceName, graylog)
+				if err := sendGrayLogUDPMessage(str, serviceName,
+					graylog); nil != err {
+					log.Println("Error sending log to graylog: ", err)
+				}
 			}
 		}
 	}()

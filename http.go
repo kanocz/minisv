@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"embed"
@@ -87,7 +88,7 @@ func basicAuth(user string, passwordHash string) func(http.Handler) http.Handler
 				return
 			}
 
-			if user != username {
+			if subtle.ConstantTimeCompare([]byte(user), []byte(username)) != 1 {
 				_requestBasicAuth(w)
 				return
 			}
@@ -105,12 +106,18 @@ func basicAuth(user string, passwordHash string) func(http.Handler) http.Handler
 func httpInit() {
 	srv := httpStart()
 
-	// wait for USR1 signal to restart server (manly for certificates reload)
+	// wait for USR1 signal to restart server (mainly for certificates reload)
 	user1Chan := make(chan os.Signal, 1)
 	signal.Notify(user1Chan, syscall.SIGUSR1)
 	for range user1Chan {
 		log.Println("Restarting http server...")
-		srv.Shutdown(context.Background())
+		// don't wait for active connections forever - the point
+		// of the restart is to get the new certificates serving
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := srv.Shutdown(ctx); nil != err {
+			log.Println("Error shutting down http server:", err)
+		}
+		cancel()
 		srv = httpStart()
 	}
 
@@ -172,7 +179,7 @@ func httpStart() *http.Server {
 	mux.HandleFunc("GET /api/{id}/hup", httpSignalTask(syscall.SIGHUP))
 	mux.HandleFunc("GET /api/{id}/kill", httpSignalTask(syscall.SIGKILL))
 	mux.HandleFunc("GET /api/{id}/rotate", httpLogRotateTask)
-	mux.HandleFunc("GET /api/{id}/status", httpStatusOfTast)
+	mux.HandleFunc("GET /api/{id}/status", httpStatusOfTask)
 	mux.HandleFunc("GET /api/{id}/logs", httpGetTaskLogBuffer)
 	mux.HandleFunc("GET /status", httpAllStatusAPI)
 
@@ -205,6 +212,12 @@ func httpStart() *http.Server {
 	srv := &http.Server{
 		Addr:    listenString,
 		Handler: handler,
+		// basic protection against connections stuck in headers/body
+		// (slowloris); WriteTimeout is above the 3s waits in handlers
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	if config.HTTP.ServerCert != "" && config.HTTP.ServerKey != "" {
@@ -281,7 +294,7 @@ func httpAllStatusAPI(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, result)
 }
 
-func httpStatusOfTast(w http.ResponseWriter, r *http.Request) {
+func httpStatusOfTask(w http.ResponseWriter, r *http.Request) {
 	task := getTask(w, r, true)
 	if nil == task {
 		return
@@ -680,7 +693,7 @@ func httpGetTaskLogBuffer(w http.ResponseWriter, r *http.Request) {
 func httpGetConfigInfo(w http.ResponseWriter, r *http.Request) {
 	config := aConfig.Load()
 	configInfo := map[string]interface{}{
-		"logBufferLines": config.LogBufferLines,
+		"logBufferLines": config.logBufferLines(),
 	}
 	writeJSON(w, configInfo)
 }
