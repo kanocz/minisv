@@ -11,6 +11,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -86,6 +87,17 @@ func httpStart() *http.Server {
 
 	if config.HTTP.User != "" && config.HTTP.Pass != "" {
 		r.Use(basicAuth(config.HTTP.User, config.HTTP.Pass))
+	} else {
+		// the API allows to run arbitrary commands, so listening on
+		// a non-loopback address without auth is almost surely a mistake
+		// (empty Addr means listening on all interfaces)
+		ip := net.ParseIP(config.HTTP.Addr)
+		if config.HTTP.Addr != "localhost" && (nil == ip || !ip.IsLoopback()) {
+			log.Printf("WARNING: HTTP API allows starting arbitrary commands"+
+				" and is listening on %q without authentication! Set http.user"+
+				" and http.password in the config or bind to 127.0.0.1",
+				fmt.Sprintf("%s:%d", config.HTTP.Addr, config.HTTP.Port))
+		}
 	}
 
 	// Load HTML templates
@@ -288,7 +300,8 @@ func httpRunTask(w http.ResponseWriter, r *http.Request) {
 	}
 	task.oneTimeMutex.Unlock()
 	if running {
-		_, _ = w.Write([]byte("just running"))
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte("already running"))
 		return
 	}
 
@@ -298,6 +311,7 @@ func httpRunTask(w http.ResponseWriter, r *http.Request) {
 
 func httpRunTaskWithInput(w http.ResponseWriter, r *http.Request) {
 	if nil == r.Body {
+		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte("no body"))
 		return
 	}
@@ -305,10 +319,12 @@ func httpRunTaskWithInput(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	body, err := io.ReadAll(r.Body)
 	if nil != err {
+		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte("body read error: " + err.Error()))
 		return
 	}
 	if nil == body {
+		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte("no body readed"))
 		return
 	}
@@ -331,7 +347,8 @@ func httpRunTaskWithInput(w http.ResponseWriter, r *http.Request) {
 	}
 	task.oneTimeMutex.Unlock()
 	if running {
-		_, _ = w.Write([]byte("just running"))
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte("already running"))
 		return
 	}
 
@@ -395,6 +412,8 @@ func httpDeleteTask(w http.ResponseWriter, r *http.Request) {
 	task, ok := config.Tasks[name]
 
 	if !ok {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte("task not found"))
 		return
 	}
 
@@ -423,6 +442,8 @@ func httpDeleteTask(w http.ResponseWriter, r *http.Request) {
 
 func httpCreateTask(w http.ResponseWriter, r *http.Request) {
 	if nil == r.Body {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("no body"))
 		return
 	}
 
@@ -431,11 +452,15 @@ func httpCreateTask(w http.ResponseWriter, r *http.Request) {
 
 	if nil != err {
 		log.Println("Error processing create task request:", err)
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("body read error: " + err.Error()))
 		return
 	}
 
 	name := chi.URLParam(r, "id")
 	if name == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("empty task name"))
 		return
 	}
 
@@ -443,10 +468,14 @@ func httpCreateTask(w http.ResponseWriter, r *http.Request) {
 	err = json.Unmarshal(body, &task)
 	if nil != err {
 		log.Println("Error processing create task request:", err)
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("invalid json: " + err.Error()))
 		return
 	}
 
 	if task.Command == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("command is required"))
 		return
 	}
 
@@ -457,7 +486,8 @@ func httpCreateTask(w http.ResponseWriter, r *http.Request) {
 	_, ok := config.Tasks[name]
 
 	if ok {
-		_, _ = w.Write([]byte("task just exist"))
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte("task already exists"))
 		return
 	}
 
