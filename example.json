@@ -5,7 +5,7 @@
     "logsuffixdate": "20060102.150405",
     "logdate": "2006/01/02 15:04:05",
     "graylog": {
-        "remote": "graylog.example.com",
+        "remote": "graylog.example.com:12201",
         "level": 1,
         "addfields": {
             "_some_info": "foo",
