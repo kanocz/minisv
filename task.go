@@ -313,20 +313,21 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 			}
 
 		case sig := <-t.cSignal:
-			if stage {
-				fmt.Fprintln(out, "[minisv] Sending ", sig,
-					" signal to process ", cmd1.Process.Pid)
-				err = cmd1.Process.Signal(sig)
-				if nil != err {
-					fmt.Fprintln(out, "[minisv] Error sending ", sig, ": ", err)
-				}
-			} else {
-				fmt.Fprintln(out, "[minisv] Sending ", sig,
-					" signal to process ", cmd2.Process.Pid)
-				err = cmd2.Process.Signal(sig)
-				if nil != err {
-					fmt.Fprintln(out, "[minisv] Error sending ", sig, ": ", err)
-				}
+			cmd, running := cmd1, run1
+			if !stage {
+				cmd, running = cmd2, run2
+			}
+			if !running || nil == cmd || nil == cmd.Process {
+				fmt.Fprintln(out, "[minisv] No running process to send ",
+					sig, " signal to")
+				continue
+			}
+
+			fmt.Fprintln(out, "[minisv] Sending ", sig,
+				" signal to process ", cmd.Process.Pid)
+			err = cmd.Process.Signal(sig)
+			if nil != err {
+				fmt.Fprintln(out, "[minisv] Error sending ", sig, ": ", err)
 			}
 
 			continue

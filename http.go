@@ -175,10 +175,14 @@ func httpStart() *http.Server {
 
 		}
 
-		go log.Println(srv.ListenAndServeTLS(config.HTTP.ServerCert, config.HTTP.ServerKey))
+		go func() {
+			log.Println(srv.ListenAndServeTLS(config.HTTP.ServerCert, config.HTTP.ServerKey))
+		}()
 	} else {
 		// HTTP
-		go log.Println(http.ListenAndServe(listenString, r))
+		go func() {
+			log.Println(srv.ListenAndServe())
+		}()
 	}
 
 	return srv
@@ -365,8 +369,10 @@ func httpDeleteTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// exit task
-	close(task.eSignal)
+	// exit task; one-time tasks have no Loop and no eSignal channel
+	if task.eSignal != nil {
+		close(task.eSignal)
+	}
 
 	newTasks := make(map[string]*Task, len(config.Tasks)+1)
 	for tname, task := range config.Tasks {
