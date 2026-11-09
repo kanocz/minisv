@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -14,9 +16,13 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"regexp"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -25,6 +31,14 @@ import (
 
 //go:embed templates/*
 var templatesFS embed.FS
+
+const (
+	maxTaskJSONBytes = 1 << 20  // task description
+	maxStdinBytes    = 64 << 20 // body passed to stdin of a one-time task
+)
+
+// taskNameRe limits names to what is safe in a log file name and a URL
+var taskNameRe = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 // UITaskData represents the task data used in UI templates
 type UITaskData struct {
@@ -79,7 +93,70 @@ func _requestBasicAuth(w http.ResponseWriter) {
 	w.WriteHeader(http.StatusUnauthorized)
 }
 
-func basicAuth(user string, passwordHash string) func(http.Handler) http.Handler {
+// authLimiter counts failed logins per client address: after limit failures
+// within a minute further attempts are rejected before the bcrypt check,
+// which costs about a second of CPU with the cost 14 hash from the README
+type authLimiter struct {
+	mu    sync.Mutex
+	limit int // <= 0 disables
+	fails map[string][]time.Time
+}
+
+// recent drops the failures older than a minute and returns the rest;
+// caller holds mu
+func (l *authLimiter) recent(ip string) []time.Time {
+	cutoff := time.Now().Add(-time.Minute)
+	kept := l.fails[ip][:0]
+	for _, at := range l.fails[ip] {
+		if at.After(cutoff) {
+			kept = append(kept, at)
+		}
+	}
+	if len(kept) == 0 {
+		delete(l.fails, ip)
+	} else {
+		l.fails[ip] = kept
+	}
+	return kept
+}
+
+func (l *authLimiter) blocked(ip string) bool {
+	if l.limit <= 0 {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.recent(ip)) >= l.limit
+}
+
+func (l *authLimiter) fail(ip string) {
+	if l.limit <= 0 {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	// ponytail: entries of other addresses expire only when touched;
+	// a sweep keeps the map bounded against an attacker rotating addresses
+	if len(l.fails) > 10000 {
+		for other := range l.fails {
+			l.recent(other)
+		}
+	}
+	l.fails[ip] = append(l.recent(ip), time.Now())
+}
+
+func (l *authLimiter) reset(ip string) {
+	l.mu.Lock()
+	delete(l.fails, ip)
+	l.mu.Unlock()
+}
+
+func basicAuth(user string, passwordHash string, failLimit int) func(http.Handler) http.Handler {
+	limiter := &authLimiter{limit: failLimit, fails: map[string][]time.Time{}}
+	// sha256 of the last accepted user and password, checked before bcrypt:
+	// the UI polls every few seconds and every poll would cost a bcrypt round
+	var accepted atomic.Pointer[[sha256.Size]byte]
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			username, password, ok := r.BasicAuth()
@@ -88,23 +165,127 @@ func basicAuth(user string, passwordHash string) func(http.Handler) http.Handler
 				return
 			}
 
-			if subtle.ConstantTimeCompare([]byte(user), []byte(username)) != 1 {
+			sum := sha256.Sum256([]byte(username + "\x00" + password))
+			if cached := accepted.Load(); nil != cached &&
+				subtle.ConstantTimeCompare(cached[:], sum[:]) == 1 {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// checked after the cache: behind a proxy or ssh tunnel every
+			// client shares one address, a script with a stale password
+			// must not lock out a client that is already logged in
+			ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+			if limiter.blocked(ip) {
+				http.Error(w, "too many failed logins, try again in a minute",
+					http.StatusTooManyRequests)
+				return
+			}
+
+			if subtle.ConstantTimeCompare([]byte(user), []byte(username)) != 1 ||
+				nil != bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password)) {
+				limiter.fail(ip)
 				_requestBasicAuth(w)
 				return
 			}
 
-			if nil != bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password)) {
-				_requestBasicAuth(w)
-				return
-			}
-
+			accepted.Store(&sum)
+			limiter.reset(ip)
 			next.ServeHTTP(w, r)
 		})
 	}
 }
 
+// csrfGuard rejects requests a browser marks as coming from another site.
+// The endpoints run commands, and a browser sends cached basic auth
+// or the client certificate along with <img src="http://minisv/x/kill">
+// embedded in any page. curl and scripts send neither header.
+func csrfGuard(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch site := r.Header.Get("Sec-Fetch-Site"); site {
+		case "same-origin", "none":
+		case "":
+			// older browsers: Origin is sent on POST/DELETE. Checked only
+			// without Sec-Fetch-Site: a reverse proxy rewrites Host, and
+			// Origin would never match it
+			if origin := r.Header.Get("Origin"); origin != "" {
+				u, err := url.Parse(origin)
+				if nil != err || u.Host != r.Host {
+					http.Error(w, "cross-site request rejected", http.StatusForbidden)
+					return
+				}
+			}
+		default:
+			http.Error(w, "cross-site request rejected", http.StatusForbidden)
+			return
+		}
+		next(w, r)
+	}
+}
+
+// readBody reads at most limit bytes of the request body, answering
+// 413 or 400 itself on failure
+func readBody(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, bool) {
+	if nil == r.Body {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("no body"))
+		return nil, false
+	}
+	defer r.Body.Close()
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
+	var tooBig *http.MaxBytesError
+	if errors.As(err, &tooBig) {
+		w.WriteHeader(http.StatusRequestEntityTooLarge)
+		_, _ = w.Write([]byte(err.Error()))
+		return nil, false
+	}
+	if nil != err {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("body read error: " + err.Error()))
+		return nil, false
+	}
+	return body, true
+}
+
+// staticHandler serves bootstrap, htmx and favicon embedded into the
+// binary: no CDN dependency to trust and the UI works without internet
+// access. Files only, no directory listing
+func staticHandler() http.Handler {
+	staticFS, err := fs.Sub(templatesFS, "templates/static")
+	if err != nil {
+		log.Fatalln("Error creating sub-filesystem for static files:", err)
+	}
+	files := http.StripPrefix("/static/", http.FileServerFS(staticFS))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/") {
+			http.NotFound(w, r)
+			return
+		}
+		files.ServeHTTP(w, r)
+	})
+}
+
+// httpSrv is the server currently serving; httpInit replaces it on USR1
+var httpSrv atomic.Pointer[http.Server]
+
+// httpStop stops accepting requests, so no task is started while minisv
+// is on its way out
+func httpStop() {
+	exiting.Store(true)
+	srv := httpSrv.Load()
+	if nil == srv {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); nil != err {
+		log.Println("Error shutting down http server:", err)
+	}
+}
+
 func httpInit() {
 	srv := httpStart()
+	httpSrv.Store(srv)
 
 	// wait for USR1 signal to restart server (mainly for certificates reload)
 	user1Chan := make(chan os.Signal, 1)
@@ -119,6 +300,7 @@ func httpInit() {
 		}
 		cancel()
 		srv = httpStart()
+		httpSrv.Store(srv)
 	}
 
 }
@@ -145,40 +327,22 @@ func httpStart() *http.Server {
 	// Load HTML templates
 	templates := loadTemplates()
 
-	// Create a sub-filesystem for templates to serve static files
-	staticFS, err := fs.Sub(templatesFS, "templates")
-	if err != nil {
-		log.Printf("Error creating sub-filesystem for static files: %v", err)
-	} else {
-		// Serve favicon.svg and other static files from the templates directory
-		mux.HandleFunc("GET /favicon.svg", func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "image/svg+xml")
-			file, err := staticFS.Open("favicon.svg")
-			if err != nil {
-				http.Error(w, "Favicon not found", http.StatusNotFound)
-				return
-			}
-			defer file.Close()
-			io.Copy(w, file)
-		})
+	mux.Handle("GET /static/", staticHandler())
 
-		// Could add other static files handlers here if needed in the future
-	}
-
-	// API routes
+	// API routes; everything that changes state goes through csrfGuard
 	mux.HandleFunc("GET /api", httpAllStatusAPI)
 	mux.HandleFunc("GET /api/{$}", httpAllStatusAPI)
 	mux.HandleFunc("GET /api/config", httpGetConfigInfo)
-	mux.HandleFunc("POST /api/{id}", httpCreateTask)
-	mux.HandleFunc("DELETE /api/{id}", httpDeleteTask)
-	mux.HandleFunc("GET /api/{id}/restart", httpRestartTask)
-	mux.HandleFunc("GET /api/{id}/run", httpRunTask)
-	mux.HandleFunc("POST /api/{id}/run", httpRunTaskWithInput)
-	mux.HandleFunc("GET /api/{id}/stop", httpStopTask)
-	mux.HandleFunc("GET /api/{id}/term", httpSignalTask(syscall.SIGTERM))
-	mux.HandleFunc("GET /api/{id}/hup", httpSignalTask(syscall.SIGHUP))
-	mux.HandleFunc("GET /api/{id}/kill", httpSignalTask(syscall.SIGKILL))
-	mux.HandleFunc("GET /api/{id}/rotate", httpLogRotateTask)
+	mux.HandleFunc("POST /api/{id}", csrfGuard(httpCreateTask))
+	mux.HandleFunc("DELETE /api/{id}", csrfGuard(httpDeleteTask))
+	mux.HandleFunc("GET /api/{id}/restart", csrfGuard(httpRestartTask))
+	mux.HandleFunc("GET /api/{id}/run", csrfGuard(httpRunTask))
+	mux.HandleFunc("POST /api/{id}/run", csrfGuard(httpRunTaskWithInput))
+	mux.HandleFunc("GET /api/{id}/stop", csrfGuard(httpStopTask))
+	mux.HandleFunc("GET /api/{id}/term", csrfGuard(httpSignalTask(syscall.SIGTERM)))
+	mux.HandleFunc("GET /api/{id}/hup", csrfGuard(httpSignalTask(syscall.SIGHUP)))
+	mux.HandleFunc("GET /api/{id}/kill", csrfGuard(httpSignalTask(syscall.SIGKILL)))
+	mux.HandleFunc("GET /api/{id}/rotate", csrfGuard(httpLogRotateTask))
 	mux.HandleFunc("GET /api/{id}/status", httpStatusOfTask)
 	mux.HandleFunc("GET /api/{id}/logs", httpGetTaskLogBuffer)
 	mux.HandleFunc("GET /status", httpAllStatusAPI)
@@ -202,7 +366,7 @@ func httpStart() *http.Server {
 
 	var handler http.Handler = mux
 	if authEnabled {
-		handler = basicAuth(config.HTTP.User, config.HTTP.Pass)(handler)
+		handler = basicAuth(config.HTTP.User, config.HTTP.Pass, config.authFailLimit())(handler)
 	}
 	handler = recoverPanics(handler)
 	handler = logRequests(handler)
@@ -228,7 +392,10 @@ func httpStart() *http.Server {
 				log.Fatalln("Error loading client cert:", err)
 			}
 			clientCertPool := x509.NewCertPool()
-			clientCertPool.AppendCertsFromPEM(clientCert)
+			// with an empty pool every client would be rejected without a hint why
+			if !clientCertPool.AppendCertsFromPEM(clientCert) {
+				log.Fatalln("No certificate found in client cert file", config.HTTP.ClientCert)
+			}
 			srv.TLSConfig = &tls.Config{
 				ClientAuth: tls.RequireAndVerifyClientCert,
 				ClientCAs:  clientCertPool,
@@ -309,14 +476,6 @@ func httpRestartTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Loop creates the channel on start, so it may be nil for a moment
-	// right after task creation
-	if nil == task.rSignal {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = w.Write([]byte("task is not ready yet, try again"))
-		return
-	}
-
 	// Loop may be busy (restart pause, waiting for a child to terminate)
 	// or already gone (task deleted) — don't hang the handler forever
 	select {
@@ -342,15 +501,9 @@ func httpRunTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task.oneTimeMutex.Lock()
-	running := task.oneTimeRunning
-	if !running {
-		task.oneTimeRunning = true
-	}
-	task.oneTimeMutex.Unlock()
-	if running {
-		w.WriteHeader(http.StatusConflict)
-		_, _ = w.Write([]byte("already running"))
+	if code, msg := task.startOneTime(); code != 0 {
+		w.WriteHeader(code)
+		_, _ = w.Write([]byte(msg))
 		return
 	}
 
@@ -359,22 +512,8 @@ func httpRunTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func httpRunTaskWithInput(w http.ResponseWriter, r *http.Request) {
-	if nil == r.Body {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte("no body"))
-		return
-	}
-
-	defer r.Body.Close()
-	body, err := io.ReadAll(r.Body)
-	if nil != err {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte("body read error: " + err.Error()))
-		return
-	}
-	if nil == body {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte("no body readed"))
+	body, ok := readBody(w, r, maxStdinBytes)
+	if !ok {
 		return
 	}
 
@@ -389,15 +528,9 @@ func httpRunTaskWithInput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task.oneTimeMutex.Lock()
-	running := task.oneTimeRunning
-	if !running {
-		task.oneTimeRunning = true
-	}
-	task.oneTimeMutex.Unlock()
-	if running {
-		w.WriteHeader(http.StatusConflict)
-		_, _ = w.Write([]byte("already running"))
+	if code, msg := task.startOneTime(); code != 0 {
+		w.WriteHeader(code)
+		_, _ = w.Write([]byte(msg))
 		return
 	}
 
@@ -411,18 +544,19 @@ func httpStopTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if nil == task.sSignal {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = w.Write([]byte("task is not ready yet, try again"))
-		return
-	}
-
 	if task.OneTime {
-		// one-time task may simply not be running - no receiver then,
-		// so just a best-effort non-blocking send
-		select {
-		case task.sSignal <- true:
-		default:
+		// nobody is receiving when the task is idle, and a queued stop
+		// would hit the next run instead
+		sent := task.signalOneTime(func() {
+			select {
+			case task.sSignal <- true:
+			default:
+			}
+		})
+		if !sent {
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte("not running"))
+			return
 		}
 		_, _ = w.Write([]byte("ok"))
 		return
@@ -444,11 +578,20 @@ func httpSignalTask(sig os.Signal) http.HandlerFunc {
 			return
 		}
 
-		if nil != task.cSignal {
+		send := func() {
 			select {
 			case task.cSignal <- sig:
 			default:
 			}
+		}
+		// see httpStopTask
+		if task.OneTime && !task.signalOneTime(send) {
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte("not running"))
+			return
+		}
+		if !task.OneTime {
+			send()
 		}
 		_, _ = w.Write([]byte("ok"))
 	}
@@ -506,31 +649,22 @@ func httpDeleteTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func httpCreateTask(w http.ResponseWriter, r *http.Request) {
-	if nil == r.Body {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte("no body"))
+	body, ok := readBody(w, r, maxTaskJSONBytes)
+	if !ok {
 		return
 	}
 
-	body, err := io.ReadAll(r.Body)
-	r.Body.Close()
-
-	if nil != err {
-		log.Println("Error processing create task request:", err)
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte("body read error: " + err.Error()))
-		return
-	}
-
+	// "config" is taken by GET /api/config
 	name := r.PathValue("id")
-	if name == "" {
+	if !taskNameRe.MatchString(name) || name == "config" {
 		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte("empty task name"))
+		_, _ = w.Write([]byte("task name must match " + taskNameRe.String() +
+			" and not be \"config\""))
 		return
 	}
 
 	var task Task
-	err = json.Unmarshal(body, &task)
+	err := json.Unmarshal(body, &task)
 	if nil != err {
 		log.Println("Error processing create task request:", err)
 		w.WriteHeader(http.StatusBadRequest)
@@ -548,7 +682,7 @@ func httpCreateTask(w http.ResponseWriter, r *http.Request) {
 	defer configChangeLock.Unlock()
 
 	config := aConfig.Load()
-	_, ok := config.Tasks[name]
+	_, ok = config.Tasks[name]
 
 	if ok {
 		w.WriteHeader(http.StatusConflict)
@@ -564,6 +698,12 @@ func httpCreateTask(w http.ResponseWriter, r *http.Request) {
 	task.name = name
 	task.initChannels()
 	newTasks[name] = &task
+
+	if exiting.Load() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte("minisv is exiting"))
+		return
+	}
 
 	// copy the Config itself too: mutating the stored one would race
 	// with readers holding the pointer from aConfig.Load()

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"sync"
@@ -42,46 +43,107 @@ type Task struct {
 // Run/Loop start and before the task is visible to http handlers —
 // recreating channels later would race with handlers reading the fields
 func (t *Task) initChannels() {
-	t.cSignal = make(chan os.Signal)
+	// buffered: http handlers send without blocking, and the loop may be
+	// busy terminating a child or validating a restart at that moment -
+	// an unbuffered channel would silently drop the request then
+	t.cSignal = make(chan os.Signal, 1)
+	t.fSignal = make(chan bool, 1)
+	t.sSignal = make(chan bool, 1)
+	// restart stays unbuffered: a queued second restart is never wanted
 	t.rSignal = make(chan bool)
-	t.fSignal = make(chan bool)
-	t.sSignal = make(chan bool)
 	t.eSignal = make(chan bool)
 }
 
 // TaskStatus is simple struct suitable for marshaling
 type TaskStatus struct {
 	Status   string    `json:"status"`
-	Started  time.Time `json:"started,omitempty"`
-	Finished time.Time `json:"finished,omitempty"`
+	Running  bool      `json:"running"`
+	Started  time.Time `json:"started,omitzero"`
+	Finished time.Time `json:"finished,omitzero"`
+}
+
+// isRunning tells whether a process is serving in this status; after
+// a failed graceful restart the old instance keeps running
+func isRunning(status string) bool {
+	switch status {
+	case "starting", "started", "running", "restart validation", "restart ok",
+		"new instance failed", "new instance exited too fast":
+		return true
+	}
+	return false
 }
 
 // GetStatus return task's status in struct
 func (t *Task) GetStatus() TaskStatus {
-	result := TaskStatus{}
+	result := TaskStatus{Status: "not started"}
 	if status, ok := t.status.Load().(string); ok {
 		result.Status = status
-	} else {
-		result.Status = "not started"
 	}
+	result.Running = isRunning(result.Status)
 	if started, ok := t.timeStarted.Load().(time.Time); ok {
 		result.Started = started
 	}
-
-	// Only include Finished time if the task is not running
-	if finished, ok := t.timeFinished.Load().(time.Time); ok {
-		// Check if the task is in a running state
-		if status, ok := t.status.Load().(string); ok {
-			isRunning := status == "running" || status == "started" || status == "restart validation" || status == "restart ok"
-			if !isRunning {
-				result.Finished = finished
-			}
-		} else {
-			result.Finished = finished
-		}
+	// the finished time of the previous run means nothing while this one runs
+	if finished, ok := t.timeFinished.Load().(time.Time); ok && !result.Running {
+		result.Finished = finished
 	}
-
 	return result
+}
+
+// startOneTime marks the task as running and drops a stop or signal queued
+// while it was idle; the http status and message when it can't. Done under
+// the mutex so a stop sent through signalOneTime never lands in the gap
+// between the check and the drain
+func (t *Task) startOneTime() (int, string) {
+	t.oneTimeMutex.Lock()
+	defer t.oneTimeMutex.Unlock()
+	if t.oneTimeRunning {
+		return http.StatusConflict, "already running"
+	}
+	if exiting.Load() {
+		return http.StatusServiceUnavailable, "minisv is exiting"
+	}
+	select {
+	case <-t.cSignal:
+	default:
+	}
+	select {
+	case <-t.sSignal:
+	default:
+	}
+	t.oneTimeRunning = true
+	oneTimeWg.Add(1)
+	return 0, ""
+}
+
+// signalOneTime runs send while the task is known to be running; false
+// when it is idle and nobody would receive
+func (t *Task) signalOneTime(send func()) bool {
+	t.oneTimeMutex.Lock()
+	defer t.oneTimeMutex.Unlock()
+	if !t.oneTimeRunning {
+		return false
+	}
+	send()
+	return true
+}
+
+// dropStaleKill removes a term or kill queued for an instance that is
+// already gone. With keepHup a hup stays in the buffer for the instance
+// that took over; after a stop there is none, so it is dropped as well.
+// Put back without blocking: Loop is the only reader, and a handler may
+// have filled the slot meanwhile
+func (t *Task) dropStaleKill(keepHup bool) {
+	select {
+	case sig := <-t.cSignal:
+		if keepHup && sig == syscall.SIGHUP {
+			select {
+			case t.cSignal <- sig:
+			default:
+			}
+		}
+	default:
+	}
 }
 
 // Run task one time
@@ -91,6 +153,7 @@ func (t *Task) Run(input []byte) {
 		t.oneTimeMutex.Lock()
 		t.oneTimeRunning = false
 		t.oneTimeMutex.Unlock()
+		oneTimeWg.Done()
 	}()
 
 	config := aConfig.Load()
@@ -108,20 +171,15 @@ func (t *Task) Run(input []byte) {
 	}()
 
 	fmt.Fprintf(writer, "[minisv] Starting %s %v\n", t.Command, t.Args)
-	cmd := exec.Command(t.Command, t.Args...)
-	cmd.Stdout = writer
-	cmd.Stderr = writer
+	cmd := t.newCmd(writer)
 	if nil != input {
 		cmd.Stdin = bytes.NewReader(input)
-	}
-	if t.WorkDir != "" {
-		cmd.Dir = t.WorkDir
 	}
 
 	t.timeStarted.Store(time.Now())
 	t.status.Store("starting")
 
-	err := cmd.Start()
+	cmdDone, err := startCmd(cmd)
 	if nil != err {
 		fmt.Fprintf(writer, "[minisv] Error starting %s (%s): %v\n",
 			t.name, t.Command, err)
@@ -132,15 +190,28 @@ func (t *Task) Run(input []byte) {
 
 	t.status.Store("running")
 
-	cmdDone := make(chan error)
-	go func() {
-		cmdDone <- cmd.Wait()
-	}()
-
 	// buffered: the sender goroutine must not block forever
 	// when the process exits before the kill timeout fires
 	killIt := make(chan bool, 1)
 	killCanceled := false
+
+	stop := func(reason string) {
+		fmt.Fprintln(writer, "[minisv] "+reason)
+		err = signalGroup(cmd, syscall.SIGTERM)
+		if nil != err {
+			fmt.Fprintln(writer, "[minisv] Error sending SIGTERM: ", err)
+		}
+		go func() {
+			time.Sleep(time.Duration(t.Wait) * time.Second)
+			select {
+			case killIt <- true:
+			default:
+			}
+		}()
+	}
+
+	// nil once handled: a closed channel would fire on every select
+	exit := needExit
 
 itsDone:
 	for {
@@ -153,26 +224,22 @@ itsDone:
 		case sig := <-t.cSignal:
 			fmt.Fprintln(writer, "[minisv] Sending ", sig,
 				" signal to process ", cmd.Process.Pid)
-			err = cmd.Process.Signal(sig)
+			err = sendSignal(cmd, sig)
 			if nil != err {
 				fmt.Fprintln(writer, "[minisv] Error sending ", sig, ": ", err)
 			}
 
 		case <-t.sSignal:
-			fmt.Fprintln(writer, "[minisv] Stopping task")
-			err = cmd.Process.Signal(syscall.SIGTERM)
-			if nil != err {
-				fmt.Fprintln(writer, "[minisv] Error sending SIGTERM: ", err)
-			}
-			go func() {
-				time.Sleep(time.Duration(t.Wait) * time.Second)
-				killIt <- true
-			}()
+			stop("Stopping task")
+
+		case <-exit:
+			exit = nil
+			stop("Terminating task, minisv is exiting")
 
 		case <-killIt:
 			if !killCanceled {
 				fmt.Fprintln(writer, "[minisv] Killing task")
-				err = cmd.Process.Signal(syscall.SIGKILL)
+				err = signalGroup(cmd, syscall.SIGKILL)
 				if nil != err {
 					fmt.Fprintln(writer, "[minisv] Error sending SIGKILL: ", err)
 				}
@@ -216,16 +283,11 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 
 	startNext := func(okstatus string) (*exec.Cmd, chan error, error) {
 		fmt.Fprintf(out, "[minisv] Starting %s %v\n", t.Command, t.Args)
-		cmd := exec.Command(t.Command, t.Args...)
-		cmd.Stdout = out
-		cmd.Stderr = out
-		if t.WorkDir != "" {
-			cmd.Dir = t.WorkDir
-		}
+		cmd := t.newCmd(out)
 
 		t.status.Store("starting")
 		t.timeStarted.Store(time.Now())
-		err = cmd.Start()
+		cmdDone, err := startCmd(cmd)
 		if nil != err {
 			t.status.Store("Error starting: " + err.Error())
 			fmt.Fprintf(out, "[minisv] Error starting %s (%s): %v\n",
@@ -233,11 +295,6 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 			return nil, nil, err
 		}
 		t.status.Store(okstatus)
-
-		cmdDone := make(chan error)
-		go func() {
-			cmdDone <- cmd.Wait()
-		}()
 
 		return cmd, cmdDone, nil
 	}
@@ -361,7 +418,7 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 
 			fmt.Fprintln(out, "[minisv] Sending ", sig,
 				" signal to process ", cmd.Process.Pid)
-			err = cmd.Process.Signal(sig)
+			err = sendSignal(cmd, sig)
 			if nil != err {
 				fmt.Fprintln(out, "[minisv] Error sending ", sig, ": ", err)
 			}
@@ -380,6 +437,8 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 				run2 = false
 			}
 
+			// a kill sent while termChild was busy must not hit the next start
+			t.dropStaleKill(false)
 			t.timeFinished.Store(time.Now())
 			t.status.Store("stopped")
 
@@ -420,6 +479,12 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 				}
 
 				if exited {
+					// its exit status is consumed, the done case will not fire
+					if stage {
+						run2 = false
+					} else {
+						run1 = false
+					}
 					t.status.Store("new instance exited too fast")
 					fmt.Fprintln(out,
 						"[minisv] New instance exited too fast, continue using old one")
@@ -430,11 +495,18 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 
 				t.status.Store("restart ok")
 				fmt.Fprintln(out, "[minisv] New instance running, terminating old one")
+				// clear the flag: termChild may have consumed the exit status
+				// from the done channel, so the done case will not fire for it
 				if stage {
 					termChild(run2, cmd2, done2, t.Wait, out, nil)
+					run2 = false
 				} else {
 					termChild(run1, cmd1, done1, t.Wait, out, nil)
+					run1 = false
 				}
+				// a term or kill sent while the old instance was still there
+				// was aimed at it, not at the new one
+				t.dropStaleKill(true)
 			}
 
 			continue
@@ -458,10 +530,15 @@ func (t *Task) Loop(cExit chan bool, wg *sync.WaitGroup) {
 			return
 		}
 
-		if t.Pause != 0 {
-			fmt.Fprintln(out, "Waiting ",
-				time.Second*time.Duration(t.Pause), " before restart")
-			startDelay = time.After(time.Second * time.Duration(t.Pause))
+		pause := time.Second * time.Duration(t.Pause)
+		// a process dying right after start must not restart in a busy loop
+		if started, ok := t.timeStarted.Load().(time.Time); ok &&
+			time.Since(started) < time.Second {
+			pause = retryPause
+		}
+		if pause > 0 {
+			fmt.Fprintln(out, "[minisv] Waiting ", pause, " before restart")
+			startDelay = time.After(pause)
 		}
 	}
 }

@@ -50,7 +50,17 @@ type Config struct {
 		ClientCert string `json:"clientcert"`
 		User       string `json:"user"`
 		Pass       string `json:"password"`
+		// failed logins per client address per minute before 429;
+		// 0 means the default of 10, negative turns the limit off
+		AuthFailLimit int `json:"authfaillimit"`
 	} `json:"http"`
+}
+
+func (c *Config) authFailLimit() int {
+	if c.HTTP.AuthFailLimit == 0 {
+		return 10
+	}
+	return c.HTTP.AuthFailLimit
 }
 
 // logBufferLines returns the number of log lines to keep in memory,
@@ -92,7 +102,6 @@ func readConfig() bool {
 		task.name = name
 		task.initChannels()
 	}
-
 
 	if config.GrayLog.Remote != "" {
 		addr, err := net.ResolveUDPAddr("udp", config.GrayLog.Remote)

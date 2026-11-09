@@ -4,6 +4,10 @@ Description=minisv process supervise
 [Service]
 ExecStart=/opt/minisv
 Restart=always
+# the HTTP API starts arbitrary commands with the rights of this user;
+# tasks that must run as root can still be started via sudo
+#User=minisv
+#Group=minisv
 
 [Install]
 WantedBy=multi-user.target

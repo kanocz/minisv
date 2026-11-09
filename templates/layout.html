@@ -4,11 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MiniSV on {{.Hostname}}</title>
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-    <script src="https://unpkg.com/htmx.org@1.9.11"></script>
-    <script src="https://unpkg.com/hyperscript.org@0.9.12"></script>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+    <script src="/static/htmx.min.js"></script>
+    <link href="/static/bootstrap.min.css" rel="stylesheet">
     <style>
         body {
             padding-top: 1.5rem;
@@ -201,8 +199,8 @@
                         </select>
                     </div>
                     <button class="btn btn-outline-secondary theme-toggle" id="theme-toggle">
-                        <i class="bi bi-sun-fill theme-icon-light"></i>
-                        <i class="bi bi-moon-fill theme-icon-dark"></i>
+                        <svg class="theme-icon-light" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style="vertical-align:-.125em"><path d="M8 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM8 0a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 0zm0 13a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 13zm8-5a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2a.5.5 0 0 1 .5.5zM3 8a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2A.5.5 0 0 1 3 8zm10.657-5.657a.5.5 0 0 1 0 .707l-1.414 1.415a.5.5 0 1 1-.707-.708l1.414-1.414a.5.5 0 0 1 .707 0zm-9.193 9.193a.5.5 0 0 1 0 .707L3.05 13.657a.5.5 0 0 1-.707-.707l1.414-1.414a.5.5 0 0 1 .707 0zm9.193 2.121a.5.5 0 0 1-.707 0l-1.414-1.414a.5.5 0 0 1 .707-.707l1.414 1.414a.5.5 0 0 1 0 .707zM4.464 4.465a.5.5 0 0 1-.707 0L2.343 3.05a.5.5 0 1 1 .707-.707l1.414 1.414a.5.5 0 0 1 0 .708z"/></svg>
+                        <svg class="theme-icon-dark" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style="vertical-align:-.125em"><path d="M6 .278a.768.768 0 0 1 .08.858 7.208 7.208 0 0 0-.878 3.46c0 4.021 3.278 7.277 7.318 7.277.527 0 1.04-.055 1.533-.16a.787.787 0 0 1 .81.316.733.733 0 0 1-.031.893A8.349 8.349 0 0 1 8.344 16C3.734 16 0 12.286 0 7.71 0 4.266 2.114 1.312 5.124.06A.752.752 0 0 1 6 .278z"/></svg>
                     </button>
                 </div>
             </div>
@@ -247,6 +245,24 @@
                                 <span>+</span> Add Argument
                             </button>
                         </div>
+                        <div class="mb-3">
+                            <label for="workdir" class="form-label">Working directory</label>
+                            <input type="text" class="form-control" id="workdir" name="workdir" placeholder="inherited from minisv when empty">
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col">
+                                <label for="wait" class="form-label">Wait (s)</label>
+                                <input type="number" min="0" class="form-control" id="wait" name="wait" value="10" title="seconds between SIGTERM and SIGKILL on stop">
+                            </div>
+                            <div class="col">
+                                <label for="restartPause" class="form-label">Restart pause (s)</label>
+                                <input type="number" min="0" class="form-control" id="restartPause" name="restartPause" value="1" title="pause before restarting an exited task">
+                            </div>
+                            <div class="col">
+                                <label for="startTime" class="form-label">Start time (s)</label>
+                                <input type="number" min="0" class="form-control" id="startTime" name="startTime" value="3" title="how long a new instance must stay alive during graceful restart">
+                            </div>
+                        </div>
                         <div class="mb-3 form-check">
                             <input type="checkbox" class="form-check-input" id="oneTime" name="oneTime">
                             <label class="form-check-label" for="oneTime">One-time Task</label>
@@ -276,7 +292,7 @@
                     <div class="d-flex justify-content-between mb-2">
                         <h6 id="logBufferTaskName"></h6>
                         <button type="button" class="btn btn-sm btn-primary" onclick="refreshLogBuffer()">
-                            <i class="bi bi-arrow-clockwise"></i> Refresh
+                            <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style="vertical-align:-.125em"><path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/><path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/></svg> Refresh
                         </button>
                     </div>
                     <div class="alert alert-info small mb-2">
@@ -291,7 +307,7 @@
         </div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/bootstrap.bundle.min.js"></script>
     <script>
         // Theme management
         function setTheme(themeName) {
@@ -373,9 +389,13 @@
             
             // Create the payload
             const payload = JSON.stringify({
-                Command: command,
-                Args: args,
-                OneTime: oneTime
+                command: command,
+                args: args,
+                workdir: document.getElementById('workdir').value,
+                wait: parseInt(document.getElementById('wait').value, 10) || 0,
+                restartPause: parseInt(document.getElementById('restartPause').value, 10) || 0,
+                startTime: parseInt(document.getElementById('startTime').value, 10) || 0,
+                oneTime: oneTime
             });
             
             // Use fetch to submit the form
@@ -492,7 +512,7 @@
                                 // Create the badge to replace [minisv]
                                 const badge = document.createElement('span');
                                 badge.className = 'minisv-log-badge';
-                                badge.innerHTML = '<i class="bi bi-gear-fill"></i>';
+                                badge.innerHTML = '<svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style="vertical-align:-.125em"><path d="M9.405 1.05c-.413-1.4-2.397-1.4-2.81 0l-.1.34a1.464 1.464 0 0 1-2.105.872l-.31-.17c-1.283-.698-2.686.705-1.987 1.987l.169.311c.446.82.023 1.841-.872 2.105l-.34.1c-1.4.413-1.4 2.397 0 2.81l.34.1a1.464 1.464 0 0 1 .872 2.105l-.17.31c-.698 1.283.705 2.686 1.987 1.987l.311-.169a1.464 1.464 0 0 1 2.105.872l.1.34c.413 1.4 2.397 1.4 2.81 0l.1-.34a1.464 1.464 0 0 1 2.105-.872l.31.17c1.283.698 2.686-.705 1.987-1.987l-.169-.311a1.464 1.464 0 0 1 .872-2.105l.34-.1c1.4-.413 1.4-2.397 0-2.81l-.34-.1a1.464 1.464 0 0 1-.872-2.105l.17-.31c.698-1.283-.705-2.686-1.987-1.987l-.311.169a1.464 1.464 0 0 1-2.105-.872l-.1-.34zM8 10.93a2.929 2.929 0 1 1 0-5.86 2.929 2.929 0 0 1 0 5.858z"/></svg>';
                                 badge.title = 'MiniSV System';
                                 
                                 // Get the content after [minisv] and add it to the line

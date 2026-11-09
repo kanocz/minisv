@@ -32,7 +32,8 @@ instead of giving up.
 
 Opening `http://[addr]:[port]/` in a browser shows a small built-in web
 interface: live status of all tasks with buttons for start/stop/restart,
-log rotation, viewing last log lines, and creating/deleting tasks.
+log rotation, viewing last log lines, and creating/deleting tasks. Bootstrap
+and htmx are embedded into the binary, the UI needs no internet access.
 
 ## HTTP API
 
@@ -54,9 +55,25 @@ old-style scheme) are kept working for backward compatibility, as well as
 *GET* `/status` for the status of all tasks.
 
 Errors are reported with meaningful HTTP status codes: 400 (bad request
-body/task description), 404 (unknown task), 406 (command not applicable to
-this task type), 409 (task already exists / one-time task already running),
-503 (task is busy, try again later).
+body/task description/task name), 403 (request marked by the browser as
+coming from another site, see below), 404 (unknown task), 406 (command not
+applicable to this task type), 409 (task already exists / one-time task
+already running or not running), 413 (body too large: 1 MB for a task
+description, 64 MB for stdin), 429 (too many failed logins), 503 (task
+is busy, try again later, or minisv is exiting).
+
+Task names may contain letters, digits, `.`, `_` and `-`; `config` is
+reserved. The status of a task carries `running` (true while a process of
+the task is alive, including the old instance after a failed graceful
+restart), `started` and `finished`.
+
+All state-changing endpoints reject requests whose `Sec-Fetch-Site` or
+`Origin` header says they come from another site: otherwise a page in
+the browser of a logged-in admin could issue `/[taskname]/kill` or create
+a task with a hidden form. curl and scripts send neither header and are
+not affected. Browsers without `Sec-Fetch-Site` (Safari before 16.4) send
+`Origin` only on POST and DELETE, so from them a GET command embedded in
+a foreign page still gets through.
 
 Commands description:
 
@@ -64,9 +81,9 @@ Commands description:
 * *restart* — start after *stop* OR _graceful restart_ if running (start a
   new instance, wait to be sure it hasn't crashed and only then terminate
   the old one); not for _onetime_ tasks
-* *term* — send SIGTERM to the process
-* *hup* — send SIGHUP to the process
-* *kill* — send SIGKILL to the process
+* *term* — send SIGTERM to the process group
+* *hup* — send SIGHUP to the process (only the leader, not its children)
+* *kill* — send SIGKILL to the process group
 * *run* — run a _onetime_ task (only for _onetime_ tasks; for stopped
   permanent tasks use *restart*)
 * *rotate* — close the log file and reopen it (with a different name when
@@ -90,8 +107,9 @@ minisv itself reacts to the following signals:
 
 * *HUP* — rotate logs of all permanent tasks
 * *USR1* — restart the HTTP server (mainly to reload changed TLS certificates)
-* *TERM* / *INT* — terminate all tasks (SIGTERM, then SIGKILL after the
-  task's `wait` timeout) and exit
+* *TERM* / *INT* — stop the HTTP server, terminate all tasks (SIGTERM,
+  then SIGKILL after the task's `wait` timeout) and exit; a running
+  one-time task is terminated the same way
 
 ## Configuration
 
@@ -104,13 +122,14 @@ RUN apt-get update && apt-get install -y nginx-light redis-server
 RUN mkdir -p /var/log/nginx /var/log/minisv /opt
 
 COPY minisv /opt
-COPY minisv.json /opt
+COPY minisv.json /etc/minisv.json
 
 EXPOSE 80 443 3443 6379
 ENTRYPOINT ["/opt/minisv"]
 ```
 
-while minisv.json contains
+while minisv.json (`/etc/minisv.json` is the default config path, `-config`
+sets another one) contains
 
 ```json
 {
@@ -159,12 +178,21 @@ docker run -v '/var/log/minisv:/var/log/minisv' 'container1'
 using different *logfileprefix* prevents mixing of logs from different
 containers.
 
+Running as PID 1 inside a container minisv reaps orphaned processes
+itself, so `--init`/tini is not needed. Every task runs in its own process
+group: stop, term and kill reach the children of the task as well, hup
+goes to the main process only. A child that outlives the main process and
+keeps its stdout open gets the pipe closed 10 seconds after the main
+process exits; the task is still reported as finished normally.
+
 Task options:
 
 * *command*, *args*, *workdir* — what to run and where
-* *wait* — seconds to wait after SIGTERM before sending SIGKILL
-* *restartPause* — pause in seconds before restarting an exited task (and
-  between attempts when the command fails to start)
+* *wait* — seconds to wait after SIGTERM before sending SIGKILL (0 means
+  SIGKILL right away)
+* *restartPause* — pause in seconds before restarting an exited task; a task
+  that fails to start or dies within a second of starting is restarted no
+  more often than once a second whatever the value
 * *startTime* — seconds a new instance must stay alive during graceful
   restart to be considered good
 * *oneTime* — the task is started only on request, not supervised
@@ -238,6 +266,25 @@ certificate:
 
 and yes, it's true — it's possible to combine https-client-auth with
 http-basic-auth at the same time and both will be required at once.
+
+A bcrypt check with cost 14 takes about a second of CPU, so failed logins
+are limited per client address: after `authfaillimit` failures within a
+minute (default 10) further attempts get 429 without the bcrypt check.
+Set it to `-1` to turn the limit off, for example behind a reverse proxy
+where all clients share one address. Requests repeating the last accepted
+credentials skip both bcrypt and the limit, so the UI polling does not
+load the CPU and a client that is already logged in keeps working while
+its address is blocked.
+
+```json
+"http": {
+        "address": "0.0.0.0",
+        "port": 3443,
+        "user": "admin",
+        "password": "...",
+        "authfaillimit": 5
+    }
+```
 
 ## Resource limits
 

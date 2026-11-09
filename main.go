@@ -8,17 +8,23 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"syscall"
 )
 
 const (
 	// AppVersion contains current application version for -version command flag
-	AppVersion = "1.2.1"
+	AppVersion = "1.3.0"
 )
 
 var (
 	needExit = make(chan bool)
 	tasksWg  = sync.WaitGroup{}
+	// runs of one-time tasks; they get SIGTERM on exit like the others
+	oneTimeWg = sync.WaitGroup{}
+	// set before the http server shuts down: a handler that outlives the
+	// shutdown timeout must not start a task nobody will wait for
+	exiting atomic.Bool
 )
 
 func main() {
@@ -42,6 +48,7 @@ func main() {
 	config := aConfig.Load()
 
 	processRLimits(config.Limits)
+	startReaper()
 
 	for _, task := range config.Tasks {
 		if !task.OneTime {
@@ -66,7 +73,9 @@ func main() {
 
 	log.Println("Exiting...")
 
+	httpStop()
 	close(needExit)
 	tasksWg.Wait()
+	oneTimeWg.Wait()
 
 }
